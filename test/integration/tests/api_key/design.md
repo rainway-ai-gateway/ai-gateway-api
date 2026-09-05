@@ -1889,10 +1889,14 @@ URI：`id`
 | AK-9-004 | unlimited false -> true 重置为 sentinel | 正常参数 | `used=0`，`remaining=100000000` |
 | AK-9-005 | unlimited true -> false 按新 quota 初始化 | 正常参数 | `used=0`，`remaining=新 quota` |
 | AK-9-006 | 普通属性修改不影响配额余额 | 正常参数 | 修改 `enabled`/`description` 等，余额不变 |
+| AK-9-007 | 仅修改 quota（单位不变）时保留非零 used | 正常参数 | 预置 Redis 剩余 400（used=600），修改 quota 为 800 后 `used=600`、`remaining=200` |
+| AK-9-008 | RMB 配额仅修改 quota 时保留非零 used | 正常参数 | 预置 Redis 剩余 400.0000（used=600.1234），修改 quota 为 800 后 `used=600.1234`、`remaining=199.8766` |
+| AK-9-009 | 配额总量修改为 0 后剩余额度清零（回归 issue #136） | 正常参数 | 预置 Redis 剩余 400（used=600），修改 quota 为 0 后 `remaining=0`，且 Redis 余额同步为 0 |
+| AK-9-010 | RMB 配额总量修改为 0 后剩余额度清零 | 正常参数 | 预置 Redis 剩余 400.0000（used=600.1234），修改 quota 为 0 后 `remaining=0`，且 Redis 余额同步为 0 |
 
 ### 14.3 测试场景详细设计
 
-> 说明：本组集成测试使用内存 Mock Redis（`Bns = "mock"`），测试进程无法直接写入 Redis。因此“保留 used”的非零 used 路径由 `model/quota`、`model/api_key` 单元测试覆盖；集成测试仅验证无使用量时的接口行为。
+> 说明：本组集成测试使用嵌入式 Redis（miniredis），测试进程可通过 `ServerManager.SetQuotaRemaining` / `GetQuotaRemaining` 直接读写 Redis，因此非零 used 路径（AK-9-007/008）与 quota 清零路径（AK-9-009/010）均在集成测试中覆盖。
 
 #### 14.3.1 AK-9-001：仅修改 quota（total_token）保留 used
 
@@ -2146,6 +2150,171 @@ URI：`id`
 | balance.remaining | 1000 | Equals |
 
 ---
+
+
+#### 14.3.7 AK-9-007：仅修改 quota（total_token）保留非零 used
+
+##### 设计思路
+
+验证“仅修改 quota、单位不变”时保留已使用量：预置 Redis 剩余 400（即 used=600），将 quota 从 1000 修改为 800 后，`used` 保持 600，`remaining` 调整为 200。
+
+##### 前提数据准备
+
+已创建有限配额 API-Key（total_token / RMB），并通过 `ServerManager.SetQuotaRemaining` 预置 Redis 余额。
+
+##### 执行步骤
+
+1. 发送 PATCH 请求修改 `quota_plan.quota`。
+2. 查询 quota-plan 接口并校验 `balance`。
+3. 通过 `ServerManager.GetQuotaRemaining` 校验 Redis 余额。
+
+##### 请求参数
+
+```json
+{
+    "quota_plan": {
+        "unlimited": false,
+        "quota": 800,
+        "unit": "total_token"
+    }
+}
+```
+
+##### 预期返回结果
+
+**ErrNum**：200  
+**ErrMsg**：success
+
+**Data 字段校验**：
+
+| 字段 | 预期值 | 校验方式 |
+|------|--------|---------|
+| balance.used | 600 | Equals |
+| balance.remaining | 200 | Equals |
+| Redis 余额（`GetQuotaRemaining`） | 200 | Equals |
+
+#### 14.3.8 AK-9-008：RMB 配额仅修改 quota 保留非零 used
+
+##### 设计思路
+
+验证 RMB 配额“仅修改 quota、单位不变”时保留已使用量（精度 1e-8 元）：预置 Redis 剩余 400.0000（used=600.1234），将 quota 从 1000.1234 修改为 800.0000 后，`used` 保持 600.1234，`remaining` 调整为 199.8766。
+
+##### 前提数据准备
+
+已创建有限配额 API-Key（total_token / RMB），并通过 `ServerManager.SetQuotaRemaining` 预置 Redis 余额。
+
+##### 执行步骤
+
+1. 发送 PATCH 请求修改 `quota_plan.quota`。
+2. 查询 quota-plan 接口并校验 `balance`。
+3. 通过 `ServerManager.GetQuotaRemaining` 校验 Redis 余额。
+
+##### 请求参数
+
+```json
+{
+    "quota_plan": {
+        "unlimited": false,
+        "quota": 800.0000,
+        "unit": "RMB"
+    }
+}
+```
+
+##### 预期返回结果
+
+**ErrNum**：200  
+**ErrMsg**：success
+
+**Data 字段校验**：
+
+| 字段 | 预期值 | 校验方式 |
+|------|--------|---------|
+| balance.used | 600.1234 | Equals |
+| balance.remaining | 199.8766 | Equals |
+| Redis 余额（`GetQuotaRemaining`） | 199.8766 | Equals |
+
+#### 14.3.9 AK-9-009：配额总量修改为 0 后剩余额度清零（回归 issue #136）
+
+##### 设计思路
+
+回归 [ai-gateway-api#136](https://github.com/rainway-ai-gateway/ai-gateway-api/issues/136)：预置 Redis 剩余 400（used=600），将 total_token 配额总量修改为 0 后，`remaining` 清零（`max(0, 0 - 600)`），且 Redis 余额被同步为 0，BFE 将立即以 QuotaExhausted 拒绝请求。
+
+##### 前提数据准备
+
+已创建有限配额 API-Key（total_token / RMB），并通过 `ServerManager.SetQuotaRemaining` 预置 Redis 余额。
+
+##### 执行步骤
+
+1. 发送 PATCH 请求修改 `quota_plan.quota`。
+2. 查询 quota-plan 接口并校验 `balance`。
+3. 通过 `ServerManager.GetQuotaRemaining` 校验 Redis 余额。
+
+##### 请求参数
+
+```json
+{
+    "quota_plan": {
+        "unlimited": false,
+        "quota": 0,
+        "unit": "total_token"
+    }
+}
+```
+
+##### 预期返回结果
+
+**ErrNum**：200  
+**ErrMsg**：success
+
+**Data 字段校验**：
+
+| 字段 | 预期值 | 校验方式 |
+|------|--------|---------|
+| balance.used | 0 | Equals |
+| balance.remaining | 0 | Equals |
+| Redis 余额（`GetQuotaRemaining`） | 0 | Equals |
+
+#### 14.3.10 AK-9-010：RMB 配额总量修改为 0 后剩余额度清零
+
+##### 设计思路
+
+RMB 配额的 quota 清零场景：预置 Redis 剩余 400.0000（used=600.1234），将 quota 从 1000.1234 修改为 0 后，`remaining` 清零，且 Redis 余额被同步为 0。
+
+##### 前提数据准备
+
+已创建有限配额 API-Key（total_token / RMB），并通过 `ServerManager.SetQuotaRemaining` 预置 Redis 余额。
+
+##### 执行步骤
+
+1. 发送 PATCH 请求修改 `quota_plan.quota`。
+2. 查询 quota-plan 接口并校验 `balance`。
+3. 通过 `ServerManager.GetQuotaRemaining` 校验 Redis 余额。
+
+##### 请求参数
+
+```json
+{
+    "quota_plan": {
+        "unlimited": false,
+        "quota": 0,
+        "unit": "RMB"
+    }
+}
+```
+
+##### 预期返回结果
+
+**ErrNum**：200  
+**ErrMsg**：success
+
+**Data 字段校验**：
+
+| 字段 | 预期值 | 校验方式 |
+|------|--------|---------|
+| balance.used | 0 | Equals |
+| balance.remaining | 0 | Equals |
+| Redis 余额（`GetQuotaRemaining`） | 0 | Equals |
 
 ## 15. 依赖与数据准备
 

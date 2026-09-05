@@ -36,6 +36,9 @@ var (
 	hostnameLabel = regexp.MustCompile(`^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?$`)
 	// nameToken matches the character set used by UserName/TokenName/ClusterName.
 	nameToken = regexp.MustCompile(`^[a-zA-Z0-9_.-]+$`)
+	// entityNameToken matches the character set used by EntityName.
+	// '@' is allowed to support names in the form "user@project".
+	entityNameToken = regexp.MustCompile(`^[a-z0-9_@_-]+$`)
 	// entityTypeToken matches the character set used by EntityTypeName.
 	entityTypeToken = regexp.MustCompile(`^[a-z0-9_-]+$`)
 	// rateLimitNameToken matches the character set used by rate-limit rule names.
@@ -275,18 +278,19 @@ func CertName(s string) error {
 }
 
 // EntityName validates an entity name.
-// Rules are aligned with EntityTypeName, except the length limit (64 vs 32).
+// Rules are aligned with EntityTypeName, except the length limit (64 vs 32)
+// and the additional '@' character (for names in the form "user@project").
 func EntityName(s string) error {
 	if err := validateName(s, 1, MaxEntityNameLength, "name"); err != nil {
 		return err
 	}
-	if err := validateNamePattern(s, entityTypeToken, "name"); err != nil {
+	if err := validateNamePattern(s, entityNameToken, "name"); err != nil {
 		return err
 	}
 	first := s[0]
 	last := s[len(s)-1]
-	if first == '-' || first == '_' || last == '-' || last == '_' {
-		return xerror.WrapParamErrorWithMsg("name cannot start or end with '-' or '_'")
+	if first == '-' || first == '_' || first == '@' || last == '-' || last == '_' || last == '@' {
+		return xerror.WrapParamErrorWithMsg("name cannot start or end with '-', '_', or '@'")
 	}
 	return nil
 }

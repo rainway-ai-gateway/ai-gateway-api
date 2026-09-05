@@ -211,6 +211,26 @@ func TestEntity_Create(t *testing.T) {
 			body:     map[string]interface{}{"name": strings.Repeat("a", 65), "type": typeName},
 			wantCode: 422,
 		},
+		{
+			name:     "E-1-019 创建 Entity name 含 @（用户名@项目名 形式）",
+			body:     map[string]interface{}{"name": testutil.UniqueEntityName() + "@default", "type": typeName},
+			wantCode: 200,
+		},
+		{
+			name:     "E-1-020 创建 Entity name 以 @ 开头",
+			body:     map[string]interface{}{"name": "@badname", "type": typeName},
+			wantCode: 422,
+		},
+		{
+			name:     "E-1-021 创建 Entity name 以 @ 结尾",
+			body:     map[string]interface{}{"name": "badname@", "type": typeName},
+			wantCode: 422,
+		},
+		{
+			name:     "E-1-022 创建 Entity name 含 @ 以外的特殊字符",
+			body:     map[string]interface{}{"name": "bad#name", "type": typeName},
+			wantCode: 422,
+		},
 	}
 
 	for _, tt := range tests {
