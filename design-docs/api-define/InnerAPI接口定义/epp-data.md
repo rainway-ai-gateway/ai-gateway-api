@@ -41,23 +41,35 @@ curl -X GET "http://api-server:port/inner-api/v1/configs/epp_data/config?version
                     "plugins": [
                         { "name": "ep-discover", "type": "cluster-table-discovery", "parameters": { "clusterName": "cluster-a" } },
                         { "name": "util-filter", "type": "utilization-filter",
-                          "parameters": { "conditions": [ { "metric": "kv-cache-utilization", "maxValue": 0.9 } ] } },
+                          "parameters": { "conditions": [ { "metric": "kv-cache-utilization", "maxValue": 0.9 } ],
+                                          "fallbackOnEmpty": false } },
+                        { "name": "saturation-detector", "type": "utilization-detector",
+                          "parameters": { "kvCacheUtilThreshold": 0.9, "queueDepthThreshold": 5,
+                                          "stalenessPolicy": "ignore", "headroom": 0.0,
+                                          "metricsStalenessThreshold": "200ms" } },
                         { "name": "kv-scorer", "type": "kv-cache-utilization-scorer", "parameters": {} },
-                        { "name": "max-score", "type": "max-score-picker", "parameters": {} }
+                        { "name": "queue-scorer", "type": "queue-scorer", "parameters": {} },
+                        { "name": "prefix-scorer", "type": "prefix-cache-scorer", "parameters": {} },
+                        { "name": "max-score", "type": "max-score-picker", "parameters": {} },
+                        { "name": "openai-parser", "type": "openai-parser", "parameters": {} }
                     ],
                     "schedulingProfiles": [
                         { "name": "default",
                           "plugins": [
                             { "pluginRef": "util-filter" },
-                            { "pluginRef": "kv-scorer", "weight": 1.0 },
+                            { "pluginRef": "kv-scorer", "weight": 0.6 },
+                            { "pluginRef": "queue-scorer", "weight": 0.6 },
+                            { "pluginRef": "prefix-scorer", "weight": 0.6 },
                             { "pluginRef": "max-score" }
                           ] }
                     ],
                     "dataLayer": { "discovery": { "endpoints": { "pluginRef": "ep-discover" } } },
                     "flowControl": {
-                        "defaultRequestTTL": "30s", "noEndpointRequestTTL": "10m",
+                        "defaultRequestTTL": "30s", "noEndpointRequestTTL": "10m0s",
+                        "saturationDetector": { "pluginRef": "saturation-detector" },
                         "priorityBands": [ { "priority": 0, "maxRequests": "1000", "maxBytes": "5Gi" } ]
-                    }
+                    },
+                    "requestHandler": { "parsers": [ { "pluginRef": "openai-parser" } ] }
                 }
             },
             "assignment": {
@@ -78,13 +90,26 @@ curl -X GET "http://api-server:port/inner-api/v1/configs/epp_data/config?version
 
 ### 3.2 Config.epp_config 段
 
-`epp_config` 为 `map[cluster名]EndpointPickerConfig`，由 OpenAPI 写入的简化 `epp_config`（见 OpenAPI 接口定义 [clusters.md](../OpenAPI接口定义/clusters.md)）在导出时**确定性编译**而来（编译规则见 `design-docs/modifications/2026-09-08-epp-scheduling-integration/api-changes.md` §3.2.1），出厂即合法。
+`epp_config` 为 `map[cluster名]EndpointPickerConfig`，由 OpenAPI 写入的简化 `epp_config`（见 OpenAPI 接口定义 [clusters.md](../OpenAPI接口定义/clusters.md)）在导出时**确定性编译**而来，出厂即合法。
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
 | \<cluster名\> | object | 编译后的完整 `EndpointPickerConfig`，key 为集群名称 |
 
 范围为全部 `balance_mode=EPP` 的 cluster。OpenAPI 校验保证 EPP 模式 cluster 的 `epp_config` 必填，因此导出结果中 EPP cluster 必然有配置。
+
+**编译规则**：见 modifications 目录 `2026-09-29-optimize-epp-arguments/api-changes.md` §3.2（EPP 暴露参数优化后的现行规则）；历史规则见 `2026-09-08-epp-scheduling-integration/api-changes.md` §3.2.1。
+
+> **结构稳定**：本次优化**不改变**本段的结构（键名、类型、`map[cluster名]EndpointPickerConfig` 形态）；仅**编译产物内容**发生如下变化：
+
+- `plugins[]` 新增 `saturation-detector`（type `utilization-detector`），**始终下发**（即使用户未配 `flow_control`）；`queue-scorer` / `prefix-scorer` / `openai-parser` 亦为编译模板固定注入项。
+- `util-filter.parameters` 新增 `fallbackOnEmpty`；`conditions` 在简化参数 `waiting_queue_max > 0` / `running_requests_max > 0` 时追加 `waiting-queue` / `running-requests` 条件（`kv-cache-utilization` 条件始终存在）。
+- `schedulingProfiles[0].plugins` 中 `kv-scorer` / `queue-scorer` 权重随 `load_profile`（`queue-first` = (0.2, 1.0)、`balanced` = (0.6, 0.6)、`kv-first` = (1.0, 0.2)）；`prefix-scorer` / `session-scorer` 权重随 `affinity`（`off` / `low` / `medium` / `high` = 0 / 0.3 / 0.6 / 1.0，`off` 时不注入亲和 scorer）。
+- `flowControl` 段**始终下发**（含 `saturationDetector.pluginRef` 与 priority band 0）；`featureGates: ["flowControl"]` 仅在简化配置含 `flow_control` 时追加；`enableEviction` 不再下发（恒缺省 `false`）。
+- `no_endpoint_queue_ttl` 缺省时，`noEndpointRequestTTL` **显式展开为 `queue_ttl` 的值**；秒数统一转 Go duration（如 `30` → `"30s"`、`600` → `"10m0s"`）。
+- `saturation-detector` 只出现在 `plugins[]` 与 `flowControl.saturationDetector`，**不写入 `schedulingProfiles[].plugins`**——llm-d 会自动将其作为过滤器生效（含"坏后端剔除"）。
+
+> **兼容性**：`saturation-detector` 为 llm-d 内建 filter，向后兼容；EPP 侧需能消费 `flowControl.saturationDetector`（或确认忽略该字段不影响启动）。`assignment` 段不受本次优化影响。
 
 ### 3.3 Config.assignment 段（全量视图）
 

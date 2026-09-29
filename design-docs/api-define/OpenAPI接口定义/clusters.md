@@ -82,12 +82,16 @@
     "description": "EPP 调度集群",
     "balance_mode": "EPP",
     "epp_config": {
-        "scheduling_profile": "balanced",
-        "cache_affinity": "medium",
+        "load_profile": "balanced",
+        "affinity": "medium",
         "prefix_cache_affinity": true,
         "session_affinity_enabled": true,
         "session_affinity_header": "x-session-id",
         "kv_cache_utilization_max": 0.9,
+        "waiting_queue_max": 0,
+        "running_requests_max": 0,
+        "fallback_on_empty": false,
+        "metrics_staleness_threshold_ms": 200,
         "flow_control": {
             "max_requests": 1000,
             "queue_ttl": 30,
@@ -113,7 +117,7 @@
 | `passive_health_check` | object | 被动健康检查 | 见下方 表：被动健康检查 | 非必填；未传时使用默认值 |
 | `llm_config` | object | AI LLM 服务配置 | 见下方 表：LLM配置 | 必填 |
 | `balance_mode` | string | 集群均衡模式 | `WRR`、`EPP` | 非必填；默认值为 `WRR`；有效枚举：`WRR`、`EPP` |
-| `epp_config` | object | EPP 调度配置（简化用户形态：调度档位 + 少量调优参数，见下方 表：EPP调度配置）。仅 `balance_mode=EPP` 时生效；`WRR` 时保留但不生效（休眠），便于 EPP ↔ WRR 来回切换不丢配置 | - | 条件必填：`balance_mode=EPP` 时必填且通过字段校验；`balance_mode=WRR` 时可选（传入则保留并做格式校验，但不生效） |
+| `epp_config` | object | EPP 调度配置（简化用户形态：实例负载画像 + 准入水位 + 排队，见下方 表：EPP调度配置）。仅 `balance_mode=EPP` 时生效；`WRR` 时保留但不生效（休眠），便于 EPP ↔ WRR 来回切换不丢配置 | - | 条件必填：`balance_mode=EPP` 时必填且通过字段校验；`balance_mode=WRR` 时可选（传入则保留并做格式校验，但不生效） |
 
 **表：连接设置**
 
@@ -211,13 +215,17 @@
 
 | 参数名 | 类型 | 参数含义 | 必填 | 补充描述 | 合法性条件 |
 | - | -  | - | - | - | - |
-| scheduling_profile | string | 调度策略档位：调度激进程度/优化目标的预设组合 | N | `latency-first`（低延迟优先：队列等待权重最高）、`balanced`（均衡）、`throughput-first`（吞吐优先：KV cache 亲和最高） | 非必填；默认值为 `balanced`；有效枚举：`latency-first`、`balanced`、`throughput-first` |
-| cache_affinity | string | scorer 权重覆盖项，显式指定 KV cache 亲和强度 | N | 缺省（未显式设置）= `medium`，语义为**跟随 `scheduling_profile`，不覆盖其权重**；显式设置后覆盖 `scheduling_profile` 的 scorer 权重 | 非必填；有效枚举：`low`、`medium`、`high` |
-| prefix_cache_affinity | bool | 前缀缓存亲和（prefix-cache-scorer）：相同 prompt 前缀的请求经前缀哈希匹配**尽力收敛**到同一后端，提升 KV cache 复用；零参数、自主学习；**软亲和，不保证一定命中匹配后端** | N | 为 `true` 时注入亲和 scorer；为 `false` 时不注入 | 非必填；默认值为 `true`；必须为 bool |
-| session_affinity_enabled | bool | 会话亲和开关（session-affinity-scorer，session_id 策略）：开启后同一 session 的请求**尽力粘住**同一后端（有 binding 状态，亲和强度高于 prefix；但仍受利用率过滤与加权总分影响，非硬路由），绑定端点摘除后自动迁移重粘 | N | 为 `true` 时注入亲和 scorer（header 取 `session_affinity_header`）；为 `false` 时不注入 | 非必填；默认值为 `false`；必须为 bool |
+| load_profile | string | **实例负载画像**：多个后端都可用时，偏向**排队短**还是 **KV 空闲**（仅调节 kv/queue 两个基础 scorer 的权重） | N | `queue-first`：偏向排队短（通常更低延迟）；`balanced`：均衡（默认）；`kv-first`：偏向 KV 空闲（通常更高吞吐） | 非必填；默认值为 `balanced`；有效枚举：`queue-first`、`balanced`、`kv-first` |
+| affinity | string | **亲和强度**：把"相同前缀 / 同一会话"的请求往同一后端聚的力度（作用于 `prefix-cache-scorer` / `session-affinity-scorer` 的权重） | N | `off`：不注入亲和 scorer（关闭亲和，即使特性开关为 `true` 也不注入）；`low` / `medium` / `high`：亲和 scorer 权重分别为 `0.3` / `0.6` / `1.0` | 非必填；默认值为 `medium`；有效枚举：`off`、`low`、`medium`、`high` |
+| prefix_cache_affinity | bool | 前缀缓存亲和（prefix-cache-scorer）：相同 prompt 前缀的请求经前缀哈希匹配**尽力收敛**到同一后端，提升 KV cache 复用；零参数、自主学习；**软亲和，不保证一定命中匹配后端** | N | 为 `true` 时注入亲和 scorer；为 `false` 时不注入；`affinity=off` 时同样不注入 | 非必填；默认值为 `true`；必须为 bool |
+| session_affinity_enabled | bool | 会话亲和开关（session-affinity-scorer，session_id 策略）：开启后同一 session 的请求**尽力粘住**同一后端（有 binding 状态，亲和强度高于 prefix；但仍受利用率过滤与加权总分影响，非硬路由），绑定端点摘除后自动迁移重粘 | N | 为 `true` 时注入亲和 scorer（header 取 `session_affinity_header`）；为 `false` 时不注入；`affinity=off` 时同样不注入 | 非必填；默认值为 `false`；必须为 bool |
 | session_affinity_header | string | session id 来源请求头（如 `x-session-id`），scorer 从该 header 解析 session id；`enabled=false` 时保留但不生效（休眠） | 条件必填 | 仅在 `session_affinity_enabled=true` 时生效 | `session_affinity_enabled=true` 时**必填**（非空 HTTP header 名）；`enabled=false`/缺省时可保留（非空 header 名，格式校验照常，不生效） |
-| kv_cache_utilization_max | float | 端点过滤阈值：KV cache 利用率超过该值的端点被过滤 | N | - | 非必填；默认值为 `0.9`；取值范围 `(0, 1]` |
-| flow_control | object | 流控参数；缺省则不下发流控段（EPP 用系统默认） | N | 见下方 表：epp_config.flow_control | 非必填；若传入，须满足 flow_control 结构约束 |
+| kv_cache_utilization_max | float | 端点过滤阈值：KV cache 利用率超过该值的端点被过滤；该值作为KV 阈值单一来源 | N | - | 非必填；默认值为 `0.9`；取值范围 `(0, 1]` |
+| waiting_queue_max | number | 端点过滤阈值：后端排队长度超过该值的端点被过滤 | N | `0` = **不启用**该项过滤（非"上限为 0"）；`>0` 时，该值作为队列阈值单一来源 | 非必填；默认值为 `0`；须为 `>= 0` 的数 |
+| running_requests_max | number | 端点过滤阈值：后端运行中请求数超过该值的端点被过滤 | N | `0` = **不启用**该项过滤（非"上限为 0"） | 非必填；默认值为 `0`；须为 `>= 0` 的数 |
+| fallback_on_empty | bool | 所有端点都被过滤时的行为：`false` = 无端点可选、不派发；`true` = 回退派给"最不差"的端点 | N | 透传 `utilization-filter.fallbackOnEmpty` | 非必填；默认值为 `false`；必须为 bool |
+| metrics_staleness_threshold_ms | int | **坏后端剔除**：后端指标超过该时长未更新，即从调度候选剔除，直到恢复抓取 | N | EPP 周期抓取各后端 `/metrics`（周期约 50ms）；默认 `200ms` ≈ 连续 4 次抓取失败；建议取值 100–500ms | 非必填；默认值为 `200`；须为 `> 0` 的整数（单位 ms） |
+| flow_control | object | 流控参数；**编译产物始终包含流控段**（含检测器声明与 priority band 0），但仅当传入 `flow_control` 时才启用排队/背压 featureGate | N | 见下方 表：epp_config.flow_control | 非必填；若传入，须满足 flow_control 结构约束 |
 
 **表：epp_config.flow_control**
 
@@ -226,9 +234,12 @@
 | max_requests | int | 全局并发上限（跨全部优先级带）；`-1` 为显式"不限"（更新时用于明确恢复不限） | N | 缺省表示不限；`-1` 也表示不限 | 非必填；若传入，取值 `>0` 或 `-1` |
 | queue_ttl | int | 池**有端点**时的排队预算（**单位：秒**），超期以可重试背压错误拒绝 | N | 缺省由 EPP 决定（llm-d 默认 60 秒）；`0` 为显式禁用驱逐 | 非必填；取值 ≥ 0 的整数 |
 | no_endpoint_queue_ttl | int | 池**无端点**（冷启动扩容）时的排队预算（**单位：秒**），regime 切换时重新起算 | N | 默认值为跟随 `queue_ttl` | 非必填；同 `queue_ttl` |
-| enable_eviction | bool | 需求驱动驱逐：高优先级被饱和阻塞时终止负优先级在飞请求回收容量 | N | - | 非必填；默认值为 `false`；必须为 bool |
+| enable_eviction | bool | 需求驱动驱逐：高优先级被饱和阻塞时终止负优先级在飞请求回收容量 | N | **当前 EPP 未接线，请保持 `false`**；编译产物不下发该字段 | 非必填；默认值为 `false`；**建议仅允许 `false`（`true` 拒绝）** |
 
-> **注意**：`epp_config` 为简化用户形态，api 导出时编译为完整 `EndpointPickerConfig`，详细编译规则见 modifications 目录 `2026-09-08-epp-scheduling-integration/api-changes.md` §3.2.1。存储保留用户原始 JSON——未显式携带的字段不落盘、GET 回读与写入一致；默认值只体现在导出编译时。
+> **废弃字段（deprecated，兼容保留，勿用于新配置）**：
+> - `scheduling_profile`（旧调度档位）：语义等价于 `load_profile`，旧值 `latency-first` → `queue-first`、`throughput-first` → `kv-first`、`balanced` 不变。同时存在时 `load_profile` 优先。
+> - `cache_affinity`（旧 scorer 权重覆盖项，枚举 `low`/`medium`/`high`）：按 `low` → `queue-first`、`medium` → `balanced`、`high` → `kv-first` 映射为 `load_profile` 覆盖；**不再**影响新 `affinity`。二者同时存在时 `load_profile` 优先。
+
 
 **约束**
 
@@ -256,7 +267,7 @@
   - `match_prefix` 若传入，必须以 `/` 结尾。
 - `llm_config.model_table` 不在 OpenAPI `/clusters` 端点中展示，调用方传入时忽略或返回 `422`；该字段由 InnerAPI 根据 `provider` 自动填充后下发给 BFE。
 - `balance_mode` 非必填，默认值为 `WRR`；有效枚举：`WRR`（BFE 本地加权轮询）、`EPP`（由 EPP 调度器接管后端选择）；`balance_mode` 是 EPP 模式的唯一判定来源。
-- `epp_config` 条件必填：`balance_mode=EPP` 时必填且通过字段校验（简化字段校验：枚举、数值范围、秒数取值范围，全部 api 侧强制，不合法拒绝提交）；`balance_mode=WRR` 时可选——传入则保留并做格式校验，但不编译、不导出（休眠）。
+- `epp_config` 条件必填：`balance_mode=EPP` 时必填且通过字段校验（简化字段校验：`load_profile`/`affinity` 枚举、`kv_cache_utilization_max` ∈ `(0,1]`、`waiting_queue_max`/`running_requests_max` ≥ 0、`metrics_staleness_threshold_ms` > 0、`flow_control` 秒数取值范围及 `enable_eviction=false`，全部 api 侧强制，不合法拒绝提交）；`balance_mode=WRR` 时可选——传入则保留并做格式校验，但不编译、不导出（休眠）。
 - `balance_mode` 更新规则：允许 `WRR → EPP`（须同时提供合法 `epp_config`）；`EPP → WRR` 仅改 `balance_mode` 即可，`epp_config` 与分配记录保留（休眠，不编译/不导出），再切回 `EPP` 时原配置与原分配继续生效（分配如已悬空由 `/epp-pool` 变更时的自动修复处理）。**任一写入中 `epp_config` 非空即须通过字段校验，与 `balance_mode` 无关**（含 `EPP → WRR` 时随请求一并携带或休眠保留的配置）。
 - 生效语义：`epp_config` 仅在 `balance_mode=EPP` 时生效；停用 EPP 调度 = 将 `balance_mode` 改回 `WRR`（无需清空 `epp_config`）。
 - `basic`、`sticky_sessions`、`passive_health_check` 若未传则使用 AI 网关场景默认值。
@@ -295,7 +306,7 @@
 | passive_health_check| object |  被动健康检查| N | AI网关场景默认推荐值：failnum=3、interval=1000ms、host为空（使用provider首个实例addr）、uri="/"、statuscode=0 | 非必填；未传时使用默认值；子字段合法性见 1 中各表 |
 | llm_config| object |  AI LLM服务配置| Y | 见 1 数据模型中表：LLM配置 | 必填；`provider` 必填且引用已存在 provider；`models` 至少1个非空元素且不能重复；子字段合法性见 1 中各表 |
 | balance_mode| string |  集群均衡模式| N | `WRR`：BFE 本地加权轮询；`EPP`：由 EPP 调度器接管后端选择 | 非必填；默认值为 `WRR`；有效枚举：`WRR`、`EPP` |
-| epp_config| object |  EPP 调度配置（简化用户形态）| N | 见 1 数据模型中表：EPP调度配置 | 条件必填：`balance_mode=EPP` 时必填且通过字段校验；`balance_mode=WRR` 时可选（传入则保留并做格式校验，不生效）；子字段合法性见 1 中各表 |
+| epp_config| object |  EPP 调度配置（简化用户形态：实例负载画像 + 准入水位 + 排队）| N | 见 1 数据模型中表：EPP调度配置 | 条件必填：`balance_mode=EPP` 时必填且通过字段校验；`balance_mode=WRR` 时可选（传入则保留并做格式校验，不生效）；子字段合法性见 1 中各表 |
 
 **HTTP BODY参数示例**
 
@@ -397,12 +408,16 @@
     "llm_config": { "provider": "p1", "models": ["m1"] },
     "balance_mode": "EPP",
     "epp_config": {
-        "scheduling_profile": "balanced",
-        "cache_affinity": "medium",
+        "load_profile": "balanced",
+        "affinity": "medium",
         "prefix_cache_affinity": true,
         "session_affinity_enabled": true,
         "session_affinity_header": "x-session-id",
         "kv_cache_utilization_max": 0.9,
+        "waiting_queue_max": 0,
+        "running_requests_max": 0,
+        "fallback_on_empty": false,
+        "metrics_staleness_threshold_ms": 200,
         "flow_control": {
             "max_requests": 1000,
             "queue_ttl": 30,
@@ -436,7 +451,7 @@
 | sticky_sessions | object | 会话保持 |
 | passive_health_check | object | 被动健康检查 |
 | balance_mode | string | 集群均衡模式；默认 `WRR` |
-| epp_config | object \| null | EPP 调度配置（简化用户形态）；未配置过时为 `null`。**原样返回存储值**：`balance_mode=WRR` 时若创建/更新中传入过 `epp_config`，仍原样返回（休眠保留、不生效），切回 `EPP` 后继续生效 |
+| epp_config | object \| null | EPP 调度配置（简化用户形态：实例负载画像 + 准入水位 + 排队）；未配置过时为 `null`。**原样返回存储值**：`balance_mode=WRR` 时若创建/更新中传入过 `epp_config`，仍原样返回（休眠保留、不生效），切回 `EPP` 后继续生效 |
 
 > **注意**：返回数据中不再包含 `instance_pool`；实例池信息通过 `llm_config.provider` 关联到 provider 获取。
 
@@ -526,7 +541,7 @@
 | 参数名 | 类型 | 参数含义 | 必填 | 补充描述 | 合法性条件 |
 | - | -  | - | - | - | - |
 | balance_mode | string | 集群均衡模式 | N | 允许 `WRR → EPP`（须同时提供合法 `epp_config`）与 `EPP → WRR`（`epp_config` 与分配记录保留休眠） | 非必填；有效枚举：`WRR`、`EPP` |
-| epp_config | object | EPP 调度配置（简化用户形态） | N | `WRR → EPP` 时须同时提供合法 `epp_config`；`EPP → WRR` 无需清空（保留休眠）；变更后即时 bump server_data_conf version | 条件必填与字段校验同创建接口；`balance_mode=WRR` 时可选（传入保留、不生效）；**非空一律做字段校验，与 balance_mode 无关** |
+| epp_config | object | EPP 调度配置（简化用户形态：实例负载画像 + 准入水位 + 排队） | N | `WRR → EPP` 时须同时提供合法 `epp_config`；`EPP → WRR` 无需清空（保留休眠）；变更后即时 bump server_data_conf version | 条件必填与字段校验同创建接口；`balance_mode=WRR` 时可选（传入保留、不生效）；**非空一律做字段校验，与 balance_mode 无关** |
 
 > **注意：**
 > - `sub_clusters` 与 `scheduler` 为系统内部自动生成，更新时不支持手动修改。
