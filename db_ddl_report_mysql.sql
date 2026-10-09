@@ -38,6 +38,11 @@
 --      非空，保持 NOT NULL；
 --   3. 按天 RANGE 分区——MySQL 无动态分区，分区管理 JOB 必须先于数据到达建好
 --      分区，否则对应日期的写入被直接拒绝（Error 1526）。
+
+DROP DATABASE IF EXISTS `bfe_report`;
+CREATE DATABASE bfe_report;
+USE bfe_report;
+
 CREATE TABLE IF NOT EXISTS bfe_ai_request_log (
     hostid                  VARCHAR(256)  NOT NULL DEFAULT '',
     log_time                DATETIME      NOT NULL,
