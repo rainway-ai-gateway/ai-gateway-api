@@ -55,7 +55,7 @@ var GetRoute = &xreq.Endpoint{
 	Authorizer: iauth.FA(iauth.FeatureSecurity, iauth.ActionRead),
 }
 
-var Routes = []*xreq.Endpoint{TriggerRoute, GetRoute}
+var Routes = []*xreq.Endpoint{TriggerRoute, ListRoute, GetRoute}
 
 type triggerParam struct {
 	Mode   *string `json:"mode"`
@@ -85,11 +85,38 @@ type taskResponse struct {
 	DryRun      bool                   `json:"dry_run"`
 	Scope       string                 `json:"scope"`
 	ActiveKeyID int                    `json:"active_key_id"`
+	CreatedBy   string                 `json:"created_by"`
 	StartedAt   string                 `json:"started_at"`
 	FinishedAt  string                 `json:"finished_at,omitempty"`
 	DurationMs  int64                  `json:"duration_ms"`
 	Summary     map[string]*tableCount `json:"summary"`
 	Error       string                 `json:"error"`
+}
+
+// taskToResponse maps a sweep task to the API task object (shared by the
+// by-id and list endpoints).
+func taskToResponse(task *keyrotate.SweepTask) *taskResponse {
+	summary := map[string]*tableCount{}
+	for name, c := range task.Summary {
+		summary[name] = &tableCount{Scanned: c.Scanned, Rewritten: c.Rewritten, Skipped: c.Skipped}
+	}
+	resp := &taskResponse{
+		TaskID:      task.TaskID,
+		Status:      string(task.Status),
+		Mode:        string(task.Mode),
+		DryRun:      task.DryRun,
+		Scope:       string(task.Scope),
+		ActiveKeyID: task.ActiveKeyID,
+		CreatedBy:   task.CreatedBy,
+		StartedAt:   task.StartedAt.Format("2006-01-02T15:04:05Z07:00"),
+		DurationMs:  task.DurationMs,
+		Summary:     summary,
+		Error:       task.FailedCause,
+	}
+	if task.FinishedAt != nil {
+		resp.FinishedAt = task.FinishedAt.Format("2006-01-02T15:04:05Z07:00")
+	}
+	return resp
 }
 
 func TriggerAction(req *http.Request) (interface{}, error) {
@@ -154,24 +181,5 @@ func GetAction(req *http.Request) (interface{}, error) {
 		return nil, err
 	}
 
-	summary := map[string]*tableCount{}
-	for name, c := range task.Summary {
-		summary[name] = &tableCount{Scanned: c.Scanned, Rewritten: c.Rewritten, Skipped: c.Skipped}
-	}
-	resp := &taskResponse{
-		TaskID:      task.TaskID,
-		Status:      string(task.Status),
-		Mode:        string(task.Mode),
-		DryRun:      task.DryRun,
-		Scope:       string(task.Scope),
-		ActiveKeyID: task.ActiveKeyID,
-		StartedAt:   task.StartedAt.Format("2006-01-02T15:04:05Z07:00"),
-		DurationMs:  task.DurationMs,
-		Summary:     summary,
-		Error:       task.FailedCause,
-	}
-	if task.FinishedAt != nil {
-		resp.FinishedAt = task.FinishedAt.Format("2006-01-02T15:04:05Z07:00")
-	}
-	return resp, nil
+	return taskToResponse(task), nil
 }

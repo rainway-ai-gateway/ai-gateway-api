@@ -45,6 +45,7 @@ type fakeStorager struct {
 	rewrites   []rewriteRec
 	finish     *finishRec
 	progress   [][3]interface{}
+	listTasks  func(ctx context.Context, filter *TaskFilter) ([]*SweepTask, int64, error)
 }
 
 type rewriteRec struct {
@@ -64,6 +65,12 @@ func (f *fakeStorager) AcquireTask(ctx context.Context, task *SweepTask) error {
 }
 func (f *fakeStorager) GetTask(ctx context.Context, taskID string) (*SweepTask, error) {
 	return nil, nil
+}
+func (f *fakeStorager) ListTasks(ctx context.Context, filter *TaskFilter) ([]*SweepTask, int64, error) {
+	if f.listTasks != nil {
+		return f.listTasks(ctx, filter)
+	}
+	return nil, 0, nil
 }
 func (f *fakeStorager) AddProgress(ctx context.Context, dbCtx lib.DBContexter, taskID string, scanned, rewritten int64) error {
 	f.mu.Lock()
@@ -278,4 +285,20 @@ func TestDecryptFailureFailsTask(t *testing.T) {
 	require.NotNil(t, fs.finish)
 	assert.Equal(t, StatusFailed, fs.finish.Status)
 	assert.Contains(t, fs.finish.Cause, "decrypt fail")
+}
+
+func TestListTasksDelegates(t *testing.T) {
+	fs := &fakeStorager{
+		listTasks: func(ctx context.Context, filter *TaskFilter) ([]*SweepTask, int64, error) {
+			return []*SweepTask{{TaskID: "rsp-1", Status: StatusSucceeded, CreatedBy: "admin"}}, 1, nil
+		},
+	}
+	m := NewManager(fs, nil)
+
+	tasks, total, err := m.ListTasks(context.Background(), &TaskFilter{Page: 1, PageSize: 20})
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), total)
+	require.Len(t, tasks, 1)
+	assert.Equal(t, "rsp-1", tasks[0].TaskID)
+	assert.Equal(t, "admin", tasks[0].CreatedBy)
 }

@@ -52,6 +52,7 @@ const (
 type Storager interface {
 	AcquireTask(ctx context.Context, task *SweepTask) error
 	GetTask(ctx context.Context, taskID string) (*SweepTask, error)
+	ListTasks(ctx context.Context, filter *TaskFilter) ([]*SweepTask, int64, error)
 	AddProgress(ctx context.Context, dbCtx lib.DBContexter, taskID string, scanned, rewritten int64) error
 	FinishTask(ctx context.Context, taskID string, status Status, cause string,
 		summary map[string]*TableCount, duration time.Duration) error
@@ -122,6 +123,11 @@ func (m *Manager) Trigger(ctx context.Context, mode Mode, dryRun bool, scope Sco
 // GetTask returns a task by id (any instance).
 func (m *Manager) GetTask(ctx context.Context, taskID string) (*SweepTask, error) {
 	return m.storager.GetTask(ctx, taskID)
+}
+
+// ListTasks queries sweep task history (OpenAPI GET .../reencrypt-sweeps).
+func (m *Manager) ListTasks(ctx context.Context, filter *TaskFilter) ([]*SweepTask, int64, error) {
+	return m.storager.ListTasks(ctx, filter)
 }
 
 // run executes the task on this instance.

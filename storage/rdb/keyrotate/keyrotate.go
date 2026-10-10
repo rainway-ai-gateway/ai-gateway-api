@@ -34,12 +34,35 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/rainway-ai-gateway/ai-gateway-api/lib"
 	"github.com/rainway-ai-gateway/ai-gateway-api/model/itxn"
 	keyrotate "github.com/rainway-ai-gateway/ai-gateway-api/model/keyrotate"
 )
+
+// taskColumns is the shared SELECT column list for keyrotate_sweep_tasks.
+const taskColumns = `task_id, status, mode, dry_run, scope, active_key_id, scanned, rewritten,
+       COALESCE(summary,''), COALESCE(error,''), heartbeat_at, started_at, finished_at, duration_ms, COALESCE(created_by,'')`
+
+// scanTask reads one task row from a QueryRow or Rows scan target.
+func scanTask(scan interface{ Scan(dest ...interface{}) error }) (*taskRow, error) {
+	var r taskRow
+	var finishedAt sql.NullTime
+	var summary sql.NullString
+	if err := scan.Scan(&r.TaskID, &r.Status, &r.Mode, &r.DryRun, &r.Scope, &r.ActiveKeyID,
+		&r.Scanned, &r.Rewritten, &summary, &r.Error, &r.HeartbeatAt, &r.StartedAt,
+		&finishedAt, &r.DurationMs, &r.CreatedBy); err != nil {
+		return nil, err
+	}
+	if finishedAt.Valid {
+		t := finishedAt.Time
+		r.FinishedAt = &t
+	}
+	r.Summary = summary.String
+	return &r, nil
+}
 
 // taskRow mirrors keyrotate_sweep_tasks.
 type taskRow struct {
@@ -129,14 +152,99 @@ func (s *Storager) GetTask(ctx context.Context, taskID string) (*keyrotate.Sweep
 	if err != nil {
 		return nil, err
 	}
-	row, err := s.taskByID(ctx, dbCtx.Execer(), taskID)
+	row, err := scanTask(dbCtx.Execer().QueryRowContext(ctx,
+		"SELECT "+taskColumns+" FROM keyrotate_sweep_tasks WHERE task_id=?", taskID))
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, keyrotate.ErrTaskNotFound
+	}
 	if err != nil {
 		return nil, err
 	}
-	if row == nil {
-		return nil, keyrotate.ErrTaskNotFound
-	}
 	return row.toTask(), nil
+}
+
+// taskFilterWhere builds the WHERE clause and args for ListTasks.
+func taskFilterWhere(filter *keyrotate.TaskFilter) (string, []interface{}) {
+	where := "1=1"
+	args := []interface{}{}
+	if filter.Status != nil {
+		where += " AND status=?"
+		args = append(args, string(*filter.Status))
+	}
+	if filter.Mode != nil {
+		where += " AND mode=?"
+		args = append(args, string(*filter.Mode))
+	}
+	if filter.Scope != nil {
+		where += " AND scope=?"
+		args = append(args, string(*filter.Scope))
+	}
+	if filter.DryRun != nil {
+		where += " AND dry_run=?"
+		args = append(args, *filter.DryRun)
+	}
+	if filter.StartTime != nil {
+		where += " AND started_at>=?"
+		args = append(args, *filter.StartTime)
+	}
+	if filter.EndTime != nil {
+		where += " AND started_at<=?"
+		args = append(args, *filter.EndTime)
+	}
+	return where, args
+}
+
+// ListTasks queries sweep task history with filters and offset pagination,
+// ordered by started_at (default) or task_id. Returns the filtered total.
+func (s *Storager) ListTasks(ctx context.Context, filter *keyrotate.TaskFilter) ([]*keyrotate.SweepTask, int64, error) {
+	dbCtx, err := s.dbCtxFactory(ctx)
+	if err != nil {
+		return nil, 0, err
+	}
+	ex := dbCtx.Execer()
+
+	where, args := taskFilterWhere(filter)
+
+	var total int64
+	if err := ex.QueryRowContext(ctx,
+		"SELECT COUNT(*) FROM keyrotate_sweep_tasks WHERE "+where, args...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+
+	orderCol := "started_at"
+	if filter.SortBy == "task_id" {
+		orderCol = "task_id"
+	}
+	orderDir := "DESC"
+	if strings.EqualFold(filter.SortOrder, "asc") {
+		orderDir = "ASC"
+	}
+	offset := (filter.Page - 1) * filter.PageSize
+	if offset < 0 {
+		offset = 0
+	}
+
+	rows, err := ex.QueryContext(ctx,
+		fmt.Sprintf("SELECT %s FROM keyrotate_sweep_tasks WHERE %s ORDER BY %s %s LIMIT ? OFFSET ?",
+			taskColumns, where, orderCol, orderDir),
+		append(args, filter.PageSize, offset)...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+
+	tasks := []*keyrotate.SweepTask{}
+	for rows.Next() {
+		r, err := scanTask(rows)
+		if err != nil {
+			return nil, 0, err
+		}
+		tasks = append(tasks, r.toTask())
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
+	return tasks, total, nil
 }
 
 // AddProgress bumps counters and heartbeat in the same statement as the
@@ -217,27 +325,15 @@ func (s *Storager) RewriteRow(ctx context.Context, dbCtx lib.DBContexter, t keyr
 }
 
 func (s *Storager) taskByID(ctx context.Context, ex lib.SqlExecutor, taskID string) (*taskRow, error) {
-	var r taskRow
-	var finishedAt sql.NullTime
-	var summary sql.NullString
-	err := ex.QueryRowContext(ctx,
-		`SELECT task_id, status, mode, dry_run, scope, active_key_id, scanned, rewritten,
-       COALESCE(summary,''), COALESCE(error,''), heartbeat_at, started_at, finished_at, duration_ms, COALESCE(created_by,'')
-       FROM keyrotate_sweep_tasks WHERE task_id=?`, taskID).
-		Scan(&r.TaskID, &r.Status, &r.Mode, &r.DryRun, &r.Scope, &r.ActiveKeyID, &r.Scanned, &r.Rewritten,
-			&summary, &r.Error, &r.HeartbeatAt, &r.StartedAt, &finishedAt, &r.DurationMs, &r.CreatedBy)
+	row, err := scanTask(ex.QueryRowContext(ctx,
+		"SELECT "+taskColumns+" FROM keyrotate_sweep_tasks WHERE task_id=?", taskID))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, err
 	}
-	if finishedAt.Valid {
-		t := finishedAt.Time
-		r.FinishedAt = &t
-	}
-	r.Summary = summary.String
-	return &r, nil
+	return row, nil
 }
 
 func (r *taskRow) toTask() *keyrotate.SweepTask {

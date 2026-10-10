@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/rainway-ai-gateway/ai-gateway-api/integration/testutil"
 	"github.com/stretchr/testify/assert"
@@ -57,6 +58,7 @@ func TestOpenAPI_Schema(t *testing.T) {
 	t.Run("intent_config", testIntentConfigSchema)
 	t.Run("epp_pool", testEppPoolSchema)
 	t.Run("epp_assignments", testEppAssignmentsSchema)
+	t.Run("security_reencrypt_sweeps", testSecuritySchema)
 }
 
 // ---------- entity-types ----------
@@ -1417,4 +1419,104 @@ func keysOfMap(m map[string]interface{}) []string {
 		keys = append(keys, k)
 	}
 	return keys
+}
+
+// ---------- security/reencrypt-sweeps ----------
+
+// testSecuritySchema 覆盖密钥收敛任务三端点的响应形状（security.md）：
+// POST 触发（触发响应不回填 created_by/时间/summary）、GET by task_id
+// 与 GET 列表（任务对象含 created_by/finished_at 终态形态）。
+// 本模块服务器无 keyring：reencrypt 模式空收敛（transform 直接 skip），
+// dry-run 任务必然 succeeded——语义用例见 secret_at_rest SAR-3-xxx，
+// 此处只锁报文形状。列表过滤带参 GET 只做形状 sanity（total 断言）。
+func testSecuritySchema(t *testing.T) {
+	const sweepPath = "/open-api/v1/security/reencrypt-sweeps"
+
+	// 零任务：空列表 + 分页结构。
+	emptyResp, err := testutil.GetClient().Get(sweepPath)
+	require.NoError(t, err)
+	testutil.AssertSuccess(t, emptyResp)
+	testutil.AssertPagedListSchema(t, emptyResp, SweepTaskSchema)
+
+	// 触发 dry-run（无 keyring：active_key_id=0 为合法形态，不锁枚举）。
+	triggerResp, err := testutil.GetClient().Post(sweepPath, map[string]interface{}{
+		"mode": "reencrypt", "dry_run": true, "scope": "providers",
+	})
+	require.NoError(t, err)
+	testutil.AssertSuccess(t, triggerResp)
+	testutil.AssertSchema(t, triggerResp, SweepTriggerSchema)
+	taskIDVal, err := testutil.GetDataField(triggerResp, "task_id")
+	require.NoError(t, err)
+	taskID := taskIDVal.(string)
+	require.NotEmpty(t, taskID)
+
+	// 非法 mode：422。
+	badResp, err := testutil.GetClient().Post(sweepPath, map[string]interface{}{"mode": "rot13"})
+	require.NoError(t, err)
+	testutil.AssertErrCode(t, badResp, 422)
+
+	// 轮询至终态：summary/finished_at/duration_ms 完成时落库，终态形态可锁。
+	waitSweepTaskTerminal(t, sweepPath, taskID)
+
+	// GET by task_id：任务对象全字段 + 键集合合同锁（12 键，无内部字段）。
+	oneResp, err := testutil.GetClient().Get(sweepPath + "/" + taskID)
+	require.NoError(t, err)
+	testutil.AssertSuccess(t, oneResp)
+	testutil.AssertSchema(t, oneResp, SweepTaskSchema)
+	assert.ElementsMatch(t,
+		[]string{"task_id", "status", "mode", "dry_run", "scope", "active_key_id",
+			"created_by", "started_at", "finished_at", "duration_ms", "summary", "error"},
+		keysOfMap(mustUnmarshalMap(t, oneResp.Data)),
+		"task keys must exactly match contract (security.md §1)")
+	// dry-run 终态任务 error 固定 "dry_run"（§1 修正语义）。
+	testutil.AssertDataFieldEquals(t, oneResp, "error", "dry_run")
+
+	// GET 列表：1 元素 + total=1。
+	listResp, err := testutil.GetClient().Get(sweepPath)
+	require.NoError(t, err)
+	testutil.AssertSuccess(t, listResp)
+	testutil.AssertPagedListSchema(t, listResp, SweepTaskSchema)
+	var listPayload map[string]interface{}
+	require.NoError(t, json.Unmarshal(listResp.Data, &listPayload))
+	pagination, ok := listPayload["pagination"].(map[string]interface{})
+	require.True(t, ok, "pagination should be object")
+	require.Equal(t, float64(1), pagination["total"])
+
+	// 带参 GET（过滤形状 sanity）：status+dry_run 命中 1，running 命中 0。
+	filteredResp, err := testutil.GetClient().Get(sweepPath, map[string]string{"status": "succeeded", "dry_run": "true"})
+	require.NoError(t, err)
+	testutil.AssertSuccess(t, filteredResp)
+	testutil.AssertPagedListSchema(t, filteredResp, SweepTaskSchema)
+	var filteredPayload map[string]interface{}
+	require.NoError(t, json.Unmarshal(filteredResp.Data, &filteredPayload))
+	require.Equal(t, float64(1), filteredPayload["pagination"].(map[string]interface{})["total"])
+
+	runningResp, err := testutil.GetClient().Get(sweepPath, map[string]string{"status": "running"})
+	require.NoError(t, err)
+	testutil.AssertSuccess(t, runningResp)
+	testutil.AssertPagedListSchema(t, runningResp, SweepTaskSchema)
+	var runningPayload map[string]interface{}
+	require.NoError(t, json.Unmarshal(runningResp.Data, &runningPayload))
+	require.Equal(t, float64(0), runningPayload["pagination"].(map[string]interface{})["total"])
+}
+
+// waitSweepTaskTerminal 轮询任务至非 running 终态，要求 succeeded，返回 Data。
+func waitSweepTaskTerminal(t *testing.T, sweepPath, taskID string) map[string]interface{} {
+	t.Helper()
+
+	deadline := time.Now().Add(15 * time.Second)
+	for {
+		resp, err := testutil.GetClient().Get(sweepPath + "/" + taskID)
+		require.NoError(t, err)
+		testutil.AssertSuccess(t, resp)
+		payload := mustUnmarshalMap(t, resp.Data)
+		if status, _ := payload["status"].(string); status != "running" {
+			require.Equal(t, "succeeded", status, "task %s must succeed (schema server has no keyring, dry-run only scans)", taskID)
+			return payload
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("sweep task %s not terminal in 15s", taskID)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
 }

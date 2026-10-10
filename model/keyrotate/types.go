@@ -55,6 +55,23 @@ type ErrConflict struct {
 	HolderTaskID string
 }
 
+// TaskFilter selects sweep tasks for the list endpoint (OpenAPI GET
+// .../reencrypt-sweeps). Nil fields are ignored. Page/PageSize are
+// 1-based and normalized by the caller; SortBy is "started_at" or
+// "task_id"; SortOrder is "asc" or "desc".
+type TaskFilter struct {
+	Status    *Status
+	Mode      *Mode
+	Scope     *Scope
+	DryRun    *bool
+	StartTime *time.Time
+	EndTime   *time.Time
+	Page      int
+	PageSize  int
+	SortBy    string
+	SortOrder string
+}
+
 func (e *ErrConflict) Error() string {
 	return "another reencrypt sweep is running: " + e.HolderTaskID
 }
