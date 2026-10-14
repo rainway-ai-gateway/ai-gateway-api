@@ -173,7 +173,6 @@ func TestEppAssignments_Get(t *testing.T) {
 		assert.NotContains(t, data["unassigned_clusters"], clusterName)
 	})
 
-
 	t.Run("EA-1-002 按 cluster 过滤查询", func(t *testing.T) {
 		data := getAssignments(t, map[string]string{"cluster": clusterName})
 		clusters := data["clusters"].([]interface{})

@@ -256,9 +256,9 @@ func TestPatchAction_ValidationErrors(t *testing.T) {
 		{"host invalid", `{"groups":[{"name":"g1","instances":[{"id":"a","host":"-bad-","port":9002}]}]}`},
 		{"port zero", `{"groups":[{"name":"g1","instances":[{"id":"a","host":"10.0.0.1","port":0}]}]}`},
 		{"port out of range", `{"groups":[{"name":"g1","instances":[{"id":"a","host":"10.0.0.1","port":70000}]}]}`},
-		{"address duplicated", `{"groups":[{"name":"g1","instances":[
-			{"id":"a","host":"10.0.0.1","port":9002},
-			{"id":"b","host":"10.0.0.1","port":9002}]}]}`},
+		{"address duplicated", `{"groups":[
+			{"name":"g1","instances":[{"id":"a","host":"10.0.0.1","port":9002}]},
+			{"name":"g2","instances":[{"id":"b","host":"10.0.0.1","port":9002}]}]}`},
 		{"body not json", `{`},
 	}
 

@@ -244,7 +244,7 @@ func TestEppPool_Update(t *testing.T) {
 			wantCode: 422,
 		},
 		{
-			name: "EP-2-013 单实例组（仅主，无备）校验通过",
+			name: "EP-2-013 单实例组校验通过",
 			body: map[string]interface{}{
 				"groups": []interface{}{
 					map[string]interface{}{

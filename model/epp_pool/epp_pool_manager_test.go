@@ -86,9 +86,13 @@ func TestPatchPool_FullReplace(t *testing.T) {
 	instances, err := store.FetchInstanceList(ctx, &InstanceFilter{})
 	require.NoError(t, err)
 	require.Len(t, instances, 2)
+	groups := map[string]bool{}
 	for _, one := range instances {
 		assert.NotEqual(t, "epp-old", one.ID)
+		groups[one.GroupName] = true
 	}
+	assert.True(t, groups["g1"])
+	assert.True(t, groups["g2"])
 }
 
 func TestPatchPool_Validation(t *testing.T) {
@@ -141,6 +145,19 @@ func TestPatchPool_Validation(t *testing.T) {
 			{Name: "g1", Instances: []*InstanceParam{{ID: "epp-a", Host: "10.0.0.1", Port: 9002}}},
 		})
 		require.NoError(t, err)
+	})
+
+	t.Run("two instances rejected with new message", func(t *testing.T) {
+		store := newMemoryEppPoolStorager()
+		m := testManager(store, &fakeClusterSource{})
+		_, err := m.PatchPool(ctx, []*InstanceGroup{
+			{Name: "g1", Instances: []*InstanceParam{
+				{ID: "epp-a", Host: "10.0.0.1", Port: 9002},
+				{ID: "epp-b", Host: "10.0.0.2", Port: 9002},
+			}},
+		})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "requires exactly 1 instance")
 	})
 }
 
