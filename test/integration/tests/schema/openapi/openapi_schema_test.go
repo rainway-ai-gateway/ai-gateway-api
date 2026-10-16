@@ -1198,7 +1198,6 @@ func testEppPoolSchema(t *testing.T) {
 				"name": "g1",
 				"instances": []interface{}{
 					map[string]interface{}{"id": "epp-a", "host": "10.0.0.1", "port": 9002},
-					map[string]interface{}{"id": "epp-b", "host": "10.0.0.2", "port": 9002},
 				},
 			},
 			map[string]interface{}{
@@ -1229,7 +1228,7 @@ func testEppPoolSchema(t *testing.T) {
 	g1 := groups[0].(map[string]interface{})
 	require.Equal(t, "g1", g1["name"])
 	insts := g1["instances"].([]interface{})
-	require.Len(t, insts, 2)
+	require.Len(t, insts, 1)
 	inst0 := insts[0].(map[string]interface{})
 	require.Equal(t, "epp-a", inst0["id"])
 	require.Equal(t, "10.0.0.1", inst0["host"])
@@ -1246,7 +1245,6 @@ func testEppAssignmentsSchema(t *testing.T) {
 				"name": "g1",
 				"instances": []interface{}{
 					map[string]interface{}{"id": "epp-a", "host": "10.0.0.1", "port": 9002},
-					map[string]interface{}{"id": "epp-b", "host": "10.0.0.2", "port": 9002},
 				},
 			},
 			map[string]interface{}{
@@ -1306,12 +1304,10 @@ func testEppAssignmentsSchema(t *testing.T) {
 	testutil.AssertSchema(t, oneResp, EppAssignmentsViewSchema)
 	assertAssignmentEntry(t, oneResp.Data, clusterName, false)
 
-	// 手工覆写后单条响应结构（standby 换为另一实例）。
-	entry := findAssignmentEntry(t, oneResp.Data, clusterName)
-	standby := entry["standby"].(map[string]interface{})
+	// 手工覆写后单条响应结构（覆写到另一组）。
 	putResp, err := testutil.GetClient().Put("/open-api/v1/epp-assignments/"+clusterName, map[string]interface{}{
-		"group_name":          "g1",
-		"primary_instance_id": standby["id"],
+		"group_name":          "g2",
+		"primary_instance_id": "epp-c",
 	})
 	require.NoError(t, err)
 	testutil.AssertSuccess(t, putResp)
@@ -1319,7 +1315,7 @@ func testEppAssignmentsSchema(t *testing.T) {
 
 	putPrimary, err := testutil.GetDataField(putResp, "primary")
 	require.NoError(t, err)
-	require.Equal(t, standby["id"], putPrimary.(map[string]interface{})["id"])
+	require.Equal(t, "epp-c", putPrimary.(map[string]interface{})["id"])
 }
 
 // findAssignmentEntry 从全量视图中取出指定 cluster 的分配条目。
@@ -1340,7 +1336,8 @@ func findAssignmentEntry(t *testing.T, data []byte, clusterName string) map[stri
 	return nil
 }
 
-// assertAssignmentEntry 定向断言指定 cluster 已分配（group/primary/standby 非空）。
+// assertAssignmentEntry 定向断言指定 cluster 已分配（group/primary 非空，
+// standby 字段已从 OpenAPI 契约删除，响应不得携带该 key）。
 func assertAssignmentEntry(t *testing.T, data []byte, clusterName string, unassigned bool) {
 	t.Helper()
 	entry := findAssignmentEntry(t, data, clusterName)
@@ -1354,7 +1351,8 @@ func assertAssignmentEntry(t *testing.T, data []byte, clusterName string, unassi
 	require.True(t, ok, "primary should be an object")
 	require.NotEmpty(t, primary["id"])
 	require.NotEmpty(t, primary["host"])
-	require.NotNil(t, entry["standby"])
+	_, hasStandby := entry["standby"]
+	require.False(t, hasStandby, "standby key must be absent from the OpenAPI view")
 }
 
 // ---------- intent-config ----------

@@ -1119,7 +1119,6 @@ func patchEppPoolForSchema(t *testing.T) {
 				"name": "g1",
 				"instances": []interface{}{
 					map[string]interface{}{"id": "epp-a", "host": "10.0.0.1", "port": 9002},
-					map[string]interface{}{"id": "epp-b", "host": "10.0.0.2", "port": 9002},
 				},
 			},
 		},
@@ -1236,7 +1235,8 @@ func testServerDataConfEppSchema(t *testing.T) {
 	testutil.AssertSuccess(t, resp)
 	testutil.AssertSchema(t, resp, ServerDataConfSchema)
 
-	// EPP cluster：BalanceMode=EPP 且 EPPAddr 有序 [主, 备]（server-data-conf.md §3.3）。
+	// EPP cluster：BalanceMode=EPP 且 EPPAddr 为单元素 [主]（server-data-conf.md §3.3；
+	// 自 2026-10-14-epp-openapi-single-instance 起实例池为单实例组，导出恒为 [主]）。
 	assignResp, err := testutil.GetClient().Get("/open-api/v1/epp-assignments", map[string]string{
 		"cluster": eppClusterName,
 	})
@@ -1247,10 +1247,8 @@ func testServerDataConfEppSchema(t *testing.T) {
 	entries := assignView["clusters"].([]interface{})
 	entry := entries[0].(map[string]interface{})
 	primary := entry["primary"].(map[string]interface{})
-	standby := entry["standby"].(map[string]interface{})
 	expectedAddrs := []interface{}{
 		fmt.Sprintf("%s:%v", primary["host"], int(primary["port"].(float64))),
-		fmt.Sprintf("%s:%v", standby["host"], int(standby["port"].(float64))),
 	}
 	assertServerDataConfEpp(t, resp.Data, eppClusterName, "EPP", expectedAddrs)
 
@@ -1259,7 +1257,7 @@ func testServerDataConfEppSchema(t *testing.T) {
 }
 
 // assertServerDataConfEpp 校验导出结果中指定 cluster 的 GslbBasic.BalanceMode / EPPAddr
-// （server-data-conf.md §3.3：EPPAddr 有序 [主, 备]，WRR 时为 null）。
+// （server-data-conf.md §3.3：单实例组下 EPPAddr 恒为单元素 [主]，WRR 时为 null）。
 func assertServerDataConfEpp(t *testing.T, data []byte, clusterName, wantMode string, wantEPPAddr []interface{}) {
 	t.Helper()
 	var payload map[string]interface{}
@@ -1285,5 +1283,5 @@ func assertServerDataConfEpp(t *testing.T, data []byte, clusterName, wantMode st
 	if !assert.True(t, ok, "EPPAddr should be an array for cluster %s", clusterName) {
 		return
 	}
-	assert.Equal(t, wantEPPAddr, eppAddr, "EPPAddr should be ordered [primary, standby]")
+	assert.Equal(t, wantEPPAddr, eppAddr, "EPPAddr should be a single-element [primary] list")
 }

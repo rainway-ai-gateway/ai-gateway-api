@@ -52,7 +52,6 @@ func twoGroupsBody() map[string]interface{} {
 				"name": "g1",
 				"instances": []interface{}{
 					map[string]interface{}{"id": "epp-a", "host": "10.0.0.1", "port": 9002},
-					map[string]interface{}{"id": "epp-b", "host": "10.0.0.2", "port": 9002},
 				},
 			},
 			map[string]interface{}{
@@ -143,16 +142,13 @@ func TestEppAssignments_Put(t *testing.T) {
 	})
 
 	t.Run("EA-2-001 手工覆写切换 primary 并回读验证", func(t *testing.T) {
-		data := getAssignments(t)
-		entry := findClusterEntry(t, data, clusterName)
+		entry := findClusterEntry(t, getAssignments(t), clusterName)
 		require.NotNil(t, entry)
-		primary := entry["primary"].(map[string]interface{})
-		standby := entry["standby"].(map[string]interface{})
 
-		newPrimary := standby["id"].(string)
+		// 覆写到另一组。
 		resp := putOverride(t, clusterName, map[string]interface{}{
-			"group_name":          "g1",
-			"primary_instance_id": newPrimary,
+			"group_name":          "g2",
+			"primary_instance_id": "epp-c",
 		})
 		testutil.AssertSuccess(t, resp)
 
@@ -161,37 +157,41 @@ func TestEppAssignments_Put(t *testing.T) {
 			t.Fatalf("unmarshal failed: %v", err)
 		}
 		assert.Equal(t, clusterName, respData["cluster"])
-		assert.Equal(t, "g1", respData["group"])
+		assert.Equal(t, "g2", respData["group"])
 		respPrimary := respData["primary"].(map[string]interface{})
-		assert.Equal(t, newPrimary, respPrimary["id"])
-		respStandby := respData["standby"].(map[string]interface{})
-		assert.Equal(t, primary["id"], respStandby["id"])
+		assert.Equal(t, "epp-c", respPrimary["id"])
+		// OpenAPI 覆写响应不再暴露 standby（key 物理删除）。
+		_, hasStandby := respData["standby"]
+		assert.False(t, hasStandby, "standby key must be absent from the OpenAPI response")
 
 		// GET 视图验证覆写生效
 		view := getAssignments(t, map[string]string{"cluster": clusterName})
 		viewEntry := findClusterEntry(t, view, clusterName)
 		require.NotNil(t, viewEntry)
-		assert.Equal(t, newPrimary, viewEntry["primary"].(map[string]interface{})["id"])
-		assert.Equal(t, primary["id"], viewEntry["standby"].(map[string]interface{})["id"])
+		assert.Equal(t, "epp-c", viewEntry["primary"].(map[string]interface{})["id"])
+		_, hasStandby = viewEntry["standby"]
+		assert.False(t, hasStandby, "standby key must be absent from the OpenAPI view")
 	})
 
-	t.Run("EA-2-002 覆写到另一组（单实例组无 standby）", func(t *testing.T) {
+	t.Run("EA-2-002 覆写回原组", func(t *testing.T) {
 		resp := putOverride(t, clusterName, map[string]interface{}{
-			"group_name":          "g2",
-			"primary_instance_id": "epp-c",
+			"group_name":          "g1",
+			"primary_instance_id": "epp-a",
 		})
 		testutil.AssertSuccess(t, resp)
 
 		var respData map[string]interface{}
 		json.Unmarshal(resp.Data, &respData)
-		assert.Equal(t, "g2", respData["group"])
-		assert.Equal(t, "epp-c", respData["primary"].(map[string]interface{})["id"])
-		assert.Nil(t, respData["standby"])
+		assert.Equal(t, "g1", respData["group"])
+		assert.Equal(t, "epp-a", respData["primary"].(map[string]interface{})["id"])
+		_, hasStandby := respData["standby"]
+		assert.False(t, hasStandby, "standby key must be absent from the OpenAPI response")
 
 		view := getAssignments(t, map[string]string{"cluster": clusterName})
 		viewEntry := findClusterEntry(t, view, clusterName)
 		require.NotNil(t, viewEntry)
-		assert.Nil(t, viewEntry["standby"])
+		_, hasStandby = viewEntry["standby"]
+		assert.False(t, hasStandby, "standby key must be absent from the OpenAPI view")
 	})
 
 	t.Run("EA-2-003 覆写不存在的 cluster 返回 404", func(t *testing.T) {

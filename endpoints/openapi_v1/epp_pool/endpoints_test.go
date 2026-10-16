@@ -213,8 +213,7 @@ func TestPatchAction(t *testing.T) {
 
 	body := `{"groups":[
 		{"name":"g1","instances":[
-			{"id":"epp-a","host":"10.0.0.1","port":9002},
-			{"id":"epp-b","host":"10.0.0.2","port":9002}]},
+			{"id":"epp-a","host":"10.0.0.1","port":9002}]},
 		{"name":"g2","instances":[
 			{"id":"epp-c","host":"10.0.0.3","port":9002}]}]}`
 
@@ -230,7 +229,7 @@ func TestPatchAction(t *testing.T) {
 	// Full replacement semantics: the previous instance is gone.
 	instances, err := storager.FetchInstanceList(context.Background(), &epp_pool.InstanceFilter{})
 	require.NoError(t, err)
-	assert.Len(t, instances, 3)
+	assert.Len(t, instances, 2)
 }
 
 func TestPatchAction_ValidationErrors(t *testing.T) {
@@ -257,9 +256,9 @@ func TestPatchAction_ValidationErrors(t *testing.T) {
 		{"host invalid", `{"groups":[{"name":"g1","instances":[{"id":"a","host":"-bad-","port":9002}]}]}`},
 		{"port zero", `{"groups":[{"name":"g1","instances":[{"id":"a","host":"10.0.0.1","port":0}]}]}`},
 		{"port out of range", `{"groups":[{"name":"g1","instances":[{"id":"a","host":"10.0.0.1","port":70000}]}]}`},
-		{"address duplicated", `{"groups":[{"name":"g1","instances":[
-			{"id":"a","host":"10.0.0.1","port":9002},
-			{"id":"b","host":"10.0.0.1","port":9002}]}]}`},
+		{"address duplicated", `{"groups":[
+			{"name":"g1","instances":[{"id":"a","host":"10.0.0.1","port":9002}]},
+			{"name":"g2","instances":[{"id":"b","host":"10.0.0.1","port":9002}]}]}`},
 		{"body not json", `{`},
 	}
 
@@ -276,7 +275,7 @@ func TestPatchAction_GroupSize(t *testing.T) {
 	_, teardown := setupManager(t)
 	defer teardown()
 
-	// Single instance group (primary only) is allowed.
+	// Single instance group is allowed.
 	one := `{"groups":[{"name":"g1","instances":[{"id":"a","host":"10.0.0.1","port":9002}]}]}`
 	data, err := PatchAction(newJSONRequest(http.MethodPatch, "/epp-pool", one))
 	require.NoError(t, err)
@@ -284,6 +283,16 @@ func TestPatchAction_GroupSize(t *testing.T) {
 	require.True(t, ok)
 	require.Len(t, pool.Groups, 1)
 	assert.Len(t, pool.Groups[0].Instances, 1)
+
+	// Two instances per group are rejected (backup/standby pairs are no
+	// longer accepted at the API write path).
+	two := `{"groups":[{"name":"g1","instances":[
+		{"id":"a","host":"10.0.0.1","port":9002},
+		{"id":"b","host":"10.0.0.2","port":9002}]}]}`
+	_, err = PatchAction(newJSONRequest(http.MethodPatch, "/epp-pool", two))
+	require.Error(t, err)
+	assert.Equal(t, 422, xerror.Resolve(err).ErrNo)
+	assert.Contains(t, err.Error(), "requires exactly 1 instance")
 
 	// Three or more instances per group are rejected.
 	three := `{"groups":[{"name":"g1","instances":[

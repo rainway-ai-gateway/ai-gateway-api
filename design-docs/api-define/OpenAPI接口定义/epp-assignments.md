@@ -4,6 +4,8 @@
 
 EPP 实例组与 cluster 之间的分配由**分配器自动生成**（触发时机与算法见 `design-docs/modifications/2026-09-08-epp-scheduling-integration/design-changes.md` §4.2：cluster 进入 EPP 模式时自动选组选主、`/epp-pool` 变更后自动修复悬空分配），本域仅提供**查询视图**与**手工覆写**（运维干预入口）；分配输入（实例组列表）来自 `/epp-pool`（见 [epp-pool.md](./epp-pool.md)）。
 
+> **说明**：本接口的视图只暴露主实例（`primary`）。备实例（standby）的读时展开仍存在于模型层与 InnerAPI 导出（`epp_data`、`EPPAddr`），用于兼容存量双实例组数据，但不在 OpenAPI 中下发。
+
 ## 2. 接口清单
 
 ### 2.1 获取分配全量视图
@@ -26,7 +28,7 @@ EPP 实例组与 cluster 之间的分配由**分配器自动生成**（触发时
 **执行逻辑**
 
 1. 查询全部（或指定）`balance_mode=EPP` 的 cluster 的分配记录。
-2. 与 EPP 实例池（`/epp-pool`）做读时 join，展开 `primary` / `standby` 实例详情。
+2. 与 EPP 实例池（`/epp-pool`）做读时 join，展开 `primary` 实例详情。
 3. 不一致时（如 primary 指向的实例已被从池中移除，或组已不存在）该条目标记 `degraded`：`primary` 返回 `null` 并计入 `unassigned_clusters`。
 4. 汇总未分配 cluster 清单与空闲实例组清单，返回。
 
@@ -38,14 +40,13 @@ EPP 实例组与 cluster 之间的分配由**分配器自动生成**（触发时
 | clusters[].cluster | string | cluster 名 |
 | clusters[].group | string | 分配的实例组名；未分配时为 `null` |
 | clusters[].primary | object \| null | 主实例；未分配或 degraded 时为 `null`。结构同 /epp-pool 实例：`{id, host, port}` |
-| clusters[].standby | object \| null | 备实例；**读时展开**：`epp_assignments` 只存 `primary_instance_id`，standby = 同组中除 primary 外的实例；单实例组或未分配时为 `null` |
 | clusters[].degraded | bool | 异常标记：primary 不在实例池（实例已被移除）或组不存在时为 `true` |
 | unassigned_clusters | []string | `balance_mode=EPP` 但 `epp_assignments` 无有效记录的 cluster 名列表。这些 cluster 导出 server_data_conf 时会**降级为 `WRR`**（无 EPP 实例可调度），api 同时输出 error 日志，属需尽快处理的异常态，单独列出便于巡检 |
 | idle_groups | []string | 实例池中未承担任何 cluster 分配的组名列表（组内实例均未作为 primary 出现；备角色不计入占用）。扩容新组后、完成分配前会出现在此列表 |
 
 > **说明**：视图是 `epp_assignments`（cluster→{group, primary}）与 `epp_instances`（/epp-pool）的**读时 join**，不引入冗余存储。
 >
-> **说明**：实例在多个 cluster 间互为主备（如 `epp-a`/`epp-b` 同时担任 cluster-a 与 cluster-b 的主备）是**合法**的——分配以 cluster 为单位，不做组↔cluster 的一对一约束。
+> **说明**：同一实例在多个 cluster 间复用（如 `epp-a` 同时担任 cluster-a 与 cluster-b 的 primary）是**合法**的——分配以 cluster 为单位，不做组↔cluster 的一对一约束。
 
 **成功返回示例**
 
@@ -58,20 +59,17 @@ EPP 实例组与 cluster 之间的分配由**分配器自动生成**（触发时
             {
                 "cluster": "cluster-a",
                 "group": "g1",
-                "primary":   { "id": "epp-a", "host": "10.0.0.1", "port": 9002 },
-                "standby":   { "id": "epp-b", "host": "10.0.0.2", "port": 9002 }
+                "primary":   { "id": "epp-a", "host": "10.0.0.1", "port": 9002 }
             },
             {
                 "cluster": "cluster-b",
                 "group": "g1",
-                "primary":   { "id": "epp-b", "host": "10.0.0.2", "port": 9002 },
-                "standby":   { "id": "epp-a", "host": "10.0.0.1", "port": 9002 }
+                "primary":   { "id": "epp-a", "host": "10.0.0.1", "port": 9002 }
             },
             {
                 "cluster": "cluster-c",
                 "group": "g2",
-                "primary":   { "id": "epp-c", "host": "10.0.0.3", "port": 9002 },
-                "standby":   null
+                "primary":   { "id": "epp-c", "host": "10.0.0.3", "port": 9002 }
             }
         ],
         "unassigned_clusters": ["cluster-d", "cluster-e"],
@@ -102,7 +100,7 @@ EPP 实例组与 cluster 之间的分配由**分配器自动生成**（触发时
 | 参数名 | 类型 | 参数含义 | 必填 | 补充描述 | 合法性条件 |
 | - | - | - | - | - | - |
 | group_name | string | 目标实例组 | Y | - | 必填；非空；必须存在于 `/epp-pool` 当前实例池中 |
-| primary_instance_id | string | 主实例 id | Y | - | 必填；非空；必须存在于 `group_name` 组的实例列表中；须与 standby 实例不同地址 |
+| primary_instance_id | string | 主实例 id | Y | - | 必填；非空；必须存在于 `group_name` 组的实例列表中 |
 
 **HTTP BODY参数示例**
 
@@ -116,20 +114,19 @@ EPP 实例组与 cluster 之间的分配由**分配器自动生成**（触发时
 **约束**
 
 - `group_name` 必须存在于 `/epp-pool` 当前实例池中。
-- `primary_instance_id` 必须存在于 `group_name` 组的实例列表中，且与 standby 实例不同地址。
-- 生产组覆写后应保持每组 2 实例（standby 自动为组内另一实例）。
+- `primary_instance_id` 必须存在于 `group_name` 组的实例列表中。
 - `EPP → WRR` 反向变更（见 [clusters.md](./clusters.md)）后分配记录休眠保留，不删除；再切回 `EPP` 时继续生效（如分配已悬空由 `/epp-pool` 变更时的自动修复处理）。
 
 **执行逻辑**
 
-1. 校验请求参数合法性（组存在、primary 存在组实例列表中、与 standby 不同地址）。
-2. 写入/更新 `epp_assignments`（cluster 唯一键 upsert，分配只存主：standby 为读时展开）。
+1. 校验请求参数合法性（组存在、primary 存在组实例列表中）。
+2. 写入/更新 `epp_assignments`（cluster 唯一键 upsert，分配只存主）。
 3. bump server_data_conf version（EPPAddr 下次导出即带出；epp_data topic 在下一次导出时由 MD5 签名机制自然 bump）。
 4. 返回更新后的该 cluster 分配视图（结构同 [2.1](#21-获取分配全量视图) `clusters[]` 元素）。
 
 **返回数据（Data内容）**
 
-结构同 [2.1](#21-获取分配全量视图) `clusters[]` 元素：`{cluster, group, primary, standby}`。
+结构同 [2.1](#21-获取分配全量视图) `clusters[]` 元素：`{cluster, group, primary}`。
 
 **成功返回示例**
 
@@ -140,8 +137,7 @@ EPP 实例组与 cluster 之间的分配由**分配器自动生成**（触发时
     "Data": {
         "cluster": "cluster-a",
         "group": "g1",
-        "primary":   { "id": "epp-a", "host": "10.0.0.1", "port": 9002 },
-        "standby":   { "id": "epp-b", "host": "10.0.0.2", "port": 9002 }
+        "primary":   { "id": "epp-a", "host": "10.0.0.1", "port": 9002 }
     }
 }
 ```

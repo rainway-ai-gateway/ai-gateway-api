@@ -52,7 +52,6 @@ func twoGroupsBody() map[string]interface{} {
 				"name": "g1",
 				"instances": []interface{}{
 					map[string]interface{}{"id": "epp-a", "host": "10.0.0.1", "port": 9002},
-					map[string]interface{}{"id": "epp-b", "host": "10.0.0.2", "port": 9002},
 				},
 			},
 			map[string]interface{}{
@@ -144,14 +143,13 @@ func TestEppAssignments_Get(t *testing.T) {
 
 		primary, ok := entry["primary"].(map[string]interface{})
 		require.True(t, ok, "primary should be non-null after auto assignment")
-		assert.Contains(t, []string{"epp-a", "epp-b"}, primary["id"])
+		assert.Equal(t, "epp-a", primary["id"])
 		assert.NotEmpty(t, primary["host"])
 		assert.NotEmpty(t, primary["port"])
 
-		standby, ok := entry["standby"].(map[string]interface{})
-		require.True(t, ok, "standby should be expanded from the same group")
-		assert.NotEqual(t, primary["id"], standby["id"])
-		assert.Contains(t, []string{"epp-a", "epp-b"}, standby["id"])
+		// OpenAPI 视图不再暴露 standby（key 物理删除）。
+		_, hasStandby := entry["standby"]
+		assert.False(t, hasStandby, "standby key must be absent from the OpenAPI view")
 
 		assert.Contains(t, data["idle_groups"], "g2")
 		assert.NotContains(t, data["unassigned_clusters"], clusterName)
@@ -193,10 +191,11 @@ func TestEppAssignments_Get(t *testing.T) {
 	})
 }
 
-// TestEppAssignments_GroupShrinkRepair 验证统一组规模规则（每组 1~2 实例）下的
-// 悬空修复语义：PATCH /epp-pool 同步触发修复，单实例组是合法组。
+// TestEppAssignments_GroupShrinkRepair 验证单实例组规则下的悬空修复语义：
+// PATCH /epp-pool 同步触发修复；已分配组消失时跨组重分配，组名不变而
+// 实例更换时同组重选 primary。
 func TestEppAssignments_GroupShrinkRepair(t *testing.T) {
-	t.Run("EA-1-005 组缩容到单实例（保留 primary）后分配保留", func(t *testing.T) {
+	t.Run("EA-1-005 已分配组被移除后跨组重分配", func(t *testing.T) {
 		resp := patchEppPool(t, twoGroupsBody())
 		testutil.AssertSuccess(t, resp)
 
@@ -207,25 +206,33 @@ func TestEppAssignments_GroupShrinkRepair(t *testing.T) {
 		entry := findClusterEntry(t, getAssignments(t), cluster)
 		require.NotNil(t, entry)
 		group := entry["group"].(string)
-		primary := entry["primary"].(map[string]interface{})
 
-		// 全量替换为：组名不变、仅保留该 primary 的单实例组。
-		resp = patchEppPool(t, map[string]interface{}{
-			"groups": []interface{}{
-				map[string]interface{}{
-					"name":      group,
-					"instances": []interface{}{primary},
-				},
+		// 全量替换为仅保留另一组：已分配组消失，分配须跨组重分配。
+		remaining := map[string]interface{}{
+			"name": "g2",
+			"instances": []interface{}{
+				map[string]interface{}{"id": "epp-c", "host": "10.0.0.3", "port": 9002},
 			},
+		}
+		if group == "g2" {
+			remaining = map[string]interface{}{
+				"name": "g1",
+				"instances": []interface{}{
+					map[string]interface{}{"id": "epp-a", "host": "10.0.0.1", "port": 9002},
+				},
+			}
+		}
+		resp = patchEppPool(t, map[string]interface{}{
+			"groups": []interface{}{remaining},
 		})
 		testutil.AssertSuccess(t, resp)
 
 		entry = findClusterEntry(t, getAssignments(t), cluster)
 		require.NotNil(t, entry)
-		assert.Equal(t, group, entry["group"], "单实例组合法：分配不换组")
-		assert.Equal(t, primary["id"], entry["primary"].(map[string]interface{})["id"], "分配不换主")
-		assert.Nil(t, entry["standby"])
+		assert.NotEqual(t, group, entry["group"], "原组已消失：跨组重分配")
 		assert.False(t, entry["degraded"].(bool))
+		_, hasStandby := entry["standby"]
+		assert.False(t, hasStandby, "standby key must be absent from the OpenAPI view")
 	})
 
 	t.Run("EA-1-006 primary 被移除后同组重选", func(t *testing.T) {
@@ -256,7 +263,8 @@ func TestEppAssignments_GroupShrinkRepair(t *testing.T) {
 		require.NotNil(t, entry)
 		assert.Equal(t, group, entry["group"], "组仍存在：不换组，同组重选 primary")
 		assert.Equal(t, replacement["id"], entry["primary"].(map[string]interface{})["id"])
-		assert.Nil(t, entry["standby"])
 		assert.False(t, entry["degraded"].(bool))
+		_, hasStandby := entry["standby"]
+		assert.False(t, hasStandby, "standby key must be absent from the OpenAPI view")
 	})
 }

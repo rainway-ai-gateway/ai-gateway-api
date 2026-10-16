@@ -16,6 +16,7 @@ package epp_assignments
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"sort"
@@ -235,8 +236,6 @@ func TestGetAction(t *testing.T) {
 	assert.Equal(t, "g1", *view.Clusters[0].Group)
 	require.NotNil(t, view.Clusters[0].Primary)
 	assert.Equal(t, "epp-a", view.Clusters[0].Primary.ID)
-	require.NotNil(t, view.Clusters[0].Standby)
-	assert.Equal(t, "epp-b", view.Clusters[0].Standby.ID)
 	assert.False(t, view.Clusters[0].Degraded)
 
 	// cluster-b is in EPP mode but has no assignment.
@@ -303,8 +302,14 @@ func TestOverrideAction(t *testing.T) {
 	assert.Equal(t, "g1", *view.Group)
 	require.NotNil(t, view.Primary)
 	assert.Equal(t, "epp-b", view.Primary.ID)
-	require.NotNil(t, view.Standby)
-	assert.Equal(t, "epp-a", view.Standby.ID)
+
+	// The OpenAPI override response must not carry a "standby" key at all
+	// (the field was removed from the API contract, not nulled).
+	bs, err := json.Marshal(data)
+	require.NoError(t, err)
+	var decoded map[string]interface{}
+	require.NoError(t, json.Unmarshal(bs, &decoded))
+	assert.NotContains(t, decoded, "standby")
 
 	stored := storager.fetchAssignment("cluster-a")
 	require.NotNil(t, stored)
@@ -351,7 +356,7 @@ func TestOverrideAction_SingleInstanceGroup(t *testing.T) {
 	_, teardown := setupManager(t)
 	defer teardown()
 
-	// cluster-b is assigned to g2 whose only instance is epp-c: no standby.
+	// cluster-b is assigned to g2 whose only instance is epp-c.
 	data, err := OverrideAction(newPutRequest("cluster-b", `{"group_name":"g2","primary_instance_id":"epp-c"}`))
 	require.NoError(t, err)
 
@@ -360,5 +365,4 @@ func TestOverrideAction_SingleInstanceGroup(t *testing.T) {
 	assert.Equal(t, "cluster-b", view.Cluster)
 	require.NotNil(t, view.Primary)
 	assert.Equal(t, "epp-c", view.Primary.ID)
-	assert.Nil(t, view.Standby)
 }

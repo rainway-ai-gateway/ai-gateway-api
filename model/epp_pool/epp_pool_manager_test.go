@@ -73,21 +73,26 @@ func TestPatchPool_FullReplace(t *testing.T) {
 	pool, err := m.PatchPool(ctx, []*InstanceGroup{
 		{Name: "g1", Instances: []*InstanceParam{
 			{ID: "epp-a", Host: "10.0.0.1", Port: 9002},
+		}},
+		{Name: "g2", Instances: []*InstanceParam{
 			{ID: "epp-b", Host: "10.0.0.2", Port: 9002},
 		}},
 	})
 	require.NoError(t, err)
-	require.Len(t, pool.Groups, 1)
+	require.Len(t, pool.Groups, 2)
 	assert.Equal(t, "g1", pool.Groups[0].Name)
 
 	// Old instances fully replaced.
 	instances, err := store.FetchInstanceList(ctx, &InstanceFilter{})
 	require.NoError(t, err)
 	require.Len(t, instances, 2)
+	groups := map[string]bool{}
 	for _, one := range instances {
 		assert.NotEqual(t, "epp-old", one.ID)
-		assert.Equal(t, "g1", one.GroupName)
+		groups[one.GroupName] = true
 	}
+	assert.True(t, groups["g1"])
+	assert.True(t, groups["g2"])
 }
 
 func TestPatchPool_Validation(t *testing.T) {
@@ -96,7 +101,6 @@ func TestPatchPool_Validation(t *testing.T) {
 	validGroup := func() *InstanceGroup {
 		return &InstanceGroup{Name: "g1", Instances: []*InstanceParam{
 			{ID: "epp-a", Host: "10.0.0.1", Port: 9002},
-			{ID: "epp-b", Host: "10.0.0.2", Port: 9002},
 		}}
 	}
 
@@ -107,15 +111,21 @@ func TestPatchPool_Validation(t *testing.T) {
 		{"empty groups", nil},
 		{"empty group name", []*InstanceGroup{{Name: "", Instances: validGroup().Instances}}},
 		{"duplicated group name", []*InstanceGroup{validGroup(), validGroup()}},
-		{"empty instance id", []*InstanceGroup{{Name: "g1", Instances: []*InstanceParam{{ID: "", Host: "10.0.0.1", Port: 9002}, {ID: "epp-b", Host: "10.0.0.2", Port: 9002}}}}},
-		{"duplicated instance id", []*InstanceGroup{{Name: "g1", Instances: []*InstanceParam{{ID: "epp-a", Host: "10.0.0.1", Port: 9002}, {ID: "epp-a", Host: "10.0.0.2", Port: 9002}}}}},
-		{"duplicated address", []*InstanceGroup{{Name: "g1", Instances: []*InstanceParam{{ID: "epp-a", Host: "10.0.0.1", Port: 9002}, {ID: "epp-b", Host: "10.0.0.1", Port: 9002}}}}},
-		{"bad host", []*InstanceGroup{{Name: "g1", Instances: []*InstanceParam{{ID: "epp-a", Host: "-bad", Port: 9002}, {ID: "epp-b", Host: "10.0.0.2", Port: 9002}}}}},
-		{"bad port", []*InstanceGroup{{Name: "g1", Instances: []*InstanceParam{{ID: "epp-a", Host: "10.0.0.1", Port: 0}, {ID: "epp-b", Host: "10.0.0.2", Port: 9002}}}}},
+		{"empty instance id", []*InstanceGroup{{Name: "g1", Instances: []*InstanceParam{{ID: "", Host: "10.0.0.1", Port: 9002}}}}},
+		{"duplicated instance id", []*InstanceGroup{
+			{Name: "g1", Instances: []*InstanceParam{{ID: "epp-a", Host: "10.0.0.1", Port: 9002}}},
+			{Name: "g2", Instances: []*InstanceParam{{ID: "epp-a", Host: "10.0.0.2", Port: 9002}}},
+		}},
+		{"duplicated address", []*InstanceGroup{
+			{Name: "g1", Instances: []*InstanceParam{{ID: "epp-a", Host: "10.0.0.1", Port: 9002}}},
+			{Name: "g2", Instances: []*InstanceParam{{ID: "epp-b", Host: "10.0.0.1", Port: 9002}}},
+		}},
+		{"bad host", []*InstanceGroup{{Name: "g1", Instances: []*InstanceParam{{ID: "epp-a", Host: "-bad", Port: 9002}}}}},
+		{"bad port", []*InstanceGroup{{Name: "g1", Instances: []*InstanceParam{{ID: "epp-a", Host: "10.0.0.1", Port: 0}}}}},
 		{"three instances rejected", []*InstanceGroup{{Name: "g1", Instances: []*InstanceParam{{ID: "epp-a", Host: "10.0.0.1", Port: 9002}, {ID: "epp-b", Host: "10.0.0.2", Port: 9002}, {ID: "epp-c", Host: "10.0.0.3", Port: 9002}}}}},
 		{"empty group rejected", []*InstanceGroup{{Name: "g1", Instances: nil}}},
 		{"nil group", []*InstanceGroup{nil}},
-		{"nil instance", []*InstanceGroup{{Name: "g1", Instances: []*InstanceParam{nil, {ID: "epp-b", Host: "10.0.0.2", Port: 9002}}}}},
+		{"nil instance", []*InstanceGroup{{Name: "g1", Instances: []*InstanceParam{nil}}}},
 	}
 
 	for _, tc := range cases {
@@ -134,6 +144,19 @@ func TestPatchPool_Validation(t *testing.T) {
 			{Name: "g1", Instances: []*InstanceParam{{ID: "epp-a", Host: "10.0.0.1", Port: 9002}}},
 		})
 		require.NoError(t, err)
+	})
+
+	t.Run("two instances rejected with new message", func(t *testing.T) {
+		store := newMemoryEppPoolStorager()
+		m := testManager(store, &fakeClusterSource{})
+		_, err := m.PatchPool(ctx, []*InstanceGroup{
+			{Name: "g1", Instances: []*InstanceParam{
+				{ID: "epp-a", Host: "10.0.0.1", Port: 9002},
+				{ID: "epp-b", Host: "10.0.0.2", Port: 9002},
+			}},
+		})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "requires exactly 1 instance")
 	})
 }
 

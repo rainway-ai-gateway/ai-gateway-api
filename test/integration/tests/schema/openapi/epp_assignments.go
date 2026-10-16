@@ -17,30 +17,30 @@ package openapi
 import "github.com/rainway-ai-gateway/ai-gateway-api/integration/testutil"
 
 // EppClusterAssignmentSchema /epp-assignments §2.1 全量视图 clusters[] 元素 schema。
-// group/primary/standby 在未分配或单实例组（无备）时为 null，故设为 Optional
+// group/primary 在未分配时为 null，故设为 Optional
 // （testutil schema 校验中 Optional 字段为 null 时跳过类型校验）。
+// standby 字段已从 OpenAPI 契约删除（2026-10-14-epp-openapi-single-instance）。
 var EppClusterAssignmentSchema = &testutil.ObjectSchema{
 	Required: []string{"cluster", "degraded"},
-	Optional: []string{"group", "primary", "standby"},
+	Optional: []string{"group", "primary"},
 	Fields: map[string]testutil.FieldSpec{
 		"cluster":  {Type: testutil.TypeString},
 		"group":    {Type: testutil.TypeString},
 		"primary":  {Type: testutil.TypeObject, Nested: EppInstanceSchema},
-		"standby":  {Type: testutil.TypeObject, Nested: EppInstanceSchema},
 		"degraded": {Type: testutil.TypeBool},
 	},
 }
 
 // EppClusterAssignmentOverrideSchema /epp-assignments §2.2 PUT 覆写响应 schema。
 // 实现（ClusterAssignmentOverrideData）按契约注释不含 degraded 标记，故此处不要求。
+// standby 字段已从 OpenAPI 契约删除（2026-10-14-epp-openapi-single-instance）。
 var EppClusterAssignmentOverrideSchema = &testutil.ObjectSchema{
 	Required: []string{"cluster"},
-	Optional: []string{"group", "primary", "standby"},
+	Optional: []string{"group", "primary"},
 	Fields: map[string]testutil.FieldSpec{
 		"cluster": {Type: testutil.TypeString},
 		"group":   {Type: testutil.TypeString},
 		"primary": {Type: testutil.TypeObject, Nested: EppInstanceSchema},
-		"standby": {Type: testutil.TypeObject, Nested: EppInstanceSchema},
 	},
 }
 

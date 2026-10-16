@@ -27,12 +27,13 @@ type InstanceData struct {
 }
 
 // ClusterAssignmentData is the per-cluster expanded assignment view
-// (epp-assignments.md §2.1 clusters[] element).
+// (epp-assignments.md §2.1 clusters[] element). The OpenAPI view exposes
+// the primary only; the model-layer standby expansion stays internal
+// (InnerAPI epp_data / EPPAddr exports).
 type ClusterAssignmentData struct {
 	Cluster  string        `json:"cluster"`
 	Group    *string       `json:"group"`
 	Primary  *InstanceData `json:"primary"`
-	Standby  *InstanceData `json:"standby"`
 	Degraded bool          `json:"degraded"`
 }
 
@@ -51,7 +52,6 @@ type ClusterAssignmentOverrideData struct {
 	Cluster string        `json:"cluster"`
 	Group   *string       `json:"group"`
 	Primary *InstanceData `json:"primary"`
-	Standby *InstanceData `json:"standby"`
 }
 
 func newInstanceData(inst *epp_pool.InstanceParam) *InstanceData {
@@ -70,7 +70,6 @@ func newClusterAssignmentData(view *epp_pool.ClusterAssignmentView) *ClusterAssi
 		Cluster:  view.Cluster,
 		Group:    view.Group,
 		Primary:  newInstanceData(view.Primary),
-		Standby:  newInstanceData(view.Standby),
 		Degraded: view.Degraded,
 	}
 }
@@ -92,6 +91,5 @@ func newClusterAssignmentOverrideData(view *epp_pool.ClusterAssignmentView) *Clu
 		Cluster: view.Cluster,
 		Group:   view.Group,
 		Primary: newInstanceData(view.Primary),
-		Standby: newInstanceData(view.Standby),
 	}
 }

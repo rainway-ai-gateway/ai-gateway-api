@@ -539,8 +539,8 @@ func allocateCluster(pool *EppPool, assignments []*AssignmentParam, clusterName 
 
 // candidateGroups returns all pool groups ordered by group name for
 // determinism. Every group in the pool is a valid candidate: PATCH
-// validation rejects empty groups and groups with 3+ instances, so every
-// group holds 1-2 instances.
+// validation rejects empty groups and groups with 2+ instances, so every
+// group holds exactly 1 instance.
 func candidateGroups(pool *EppPool) []*InstanceGroup {
 	candidates := append([]*InstanceGroup(nil), pool.Groups...)
 	sort.Slice(candidates, func(i, j int) bool { return candidates[i].Name < candidates[j].Name })

@@ -300,11 +300,12 @@ func (m *EppPoolManager) validateGroups(groups []*InstanceGroup) ([]*InstancePar
 	return flat, nil
 }
 
-// validateGroupSize enforces the per-group instance count: 1 (primary only)
-// or 2 (primary + standby); empty groups and groups with 3+ instances are rejected.
+// validateGroupSize enforces the per-group instance count: exactly 1
+// (a group configures a single EPP instance; backup/standby pairs are
+// no longer accepted at the API write path).
 func (m *EppPoolManager) validateGroupSize(group *InstanceGroup) error {
-	if n := len(group.Instances); n < 1 || n > 2 {
-		return xerror.WrapParamErrorWithMsg("epp pool group %q requires 1 or 2 instances, got %d", group.Name, n)
+	if n := len(group.Instances); n != 1 {
+		return xerror.WrapParamErrorWithMsg("epp pool group %q requires exactly 1 instance, got %d", group.Name, n)
 	}
 	return nil
 }

@@ -79,13 +79,13 @@ api 导出时把简化配置**确定性编译**为完整 `EndpointPickerConfig`�
 
 - **单例池**，池名由配置项 `RunTime.DefaultEPPInstancePoolName` 提供（默认 `EPP.pool`）；`GET` 详情 + `PATCH` 全量替换。
 - 实例列表是**部署事实**：部署流程在扩缩容/换机后 reconcile PATCH，天然幂等；api 侧无心跳续约、失联阈值等存活管理负担。
-- 组规模校验：每组 1~2 实例（1=仅主，2=主+备），拒绝空组与 3 个及以上实例的组。
+- 组规模校验：每组恰好 1 实例，拒绝空组与 2 个及以上实例的组（API 写入面不再接受主备双实例组）。
 
 ### 4.2 分配器：贪心 + 确定性 tie-break
 
 ```
 输入：实例池（组→实例列表）、现有分配（epp_assignments）、目标 cluster
-1. 候选组：池中全部组（PATCH 校验保证每组 1~2 实例，无空组），按组名排序
+1. 候选组：池中全部组（PATCH 校验保证每组恰 1 实例，无空组），按组名排序
 2. 选组：组负载 = 组内各实例"作为 primary 承担的 cluster 数"之和
         → 最小者优先，并列取组名字典序最小
 3. 选主：组内"作为 primary 承担的 cluster 数最少"的实例
@@ -106,7 +106,7 @@ api 导出时把简化配置**确定性编译**为完整 `EndpointPickerConfig`�
 
 ### 4.4 查询与手工覆写
 
-- `GET /api/v1/epp-assignments`：分配全量视图——`epp_assignments` 与 `epp_instances` 的**读时 join**（不引入冗余存储），per-cluster 展开 `{group, primary, standby}`；不一致标记 `degraded`；汇总 `unassigned_clusters` 与 `idle_groups` 便于巡检。
+- `GET /api/v1/epp-assignments`：分配全量视图——`epp_assignments` 与 `epp_instances` 的**读时 join**（不引入冗余存储），per-cluster 展开 `{group, primary}`（OpenAPI 视图不暴露 standby，内部读时展开保留）；不一致标记 `degraded`；汇总 `unassigned_clusters` 与 `idle_groups` 便于巡检。
 - `PUT /api/v1/epp-assignments/{cluster}`：手工覆写 `{group_name, primary_instance_id}`（运维干预入口），触发 server_data_conf version bump。
 
 ---

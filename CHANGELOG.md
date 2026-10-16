@@ -9,6 +9,12 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [Unreleased]
+
+### Changed
+- Tighten `PATCH /epp-pool` group-size validation to exactly 1 instance per group (backup/standby pairs are no longer accepted at the API write path).
+- Remove the `standby` field from the OpenAPI `/epp-assignments` responses (GET view and PUT override). The internal model view, the InnerAPI `epp_data` export and the `EPPAddr` semantics are unchanged (single-instance groups export `standby: null` / single-element `EPPAddr` as before; existing two-instance groups keep their read/export behavior). See `design-docs/modifications/2026-10-14-epp-openapi-single-instance/`.
+
 ## [0.0.10] - 2026-09-24
 
 ### Added
