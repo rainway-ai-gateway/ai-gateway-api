@@ -300,7 +300,8 @@ func TestReportLogsAction_CacheMirrorIntentFilters(t *testing.T) {
 	defer func() { container.ReportManager = nil }()
 
 	url := "/open-api/v1/report/logs?" + testQuery +
-		"&cache_status=hit&mirror_hit=true&intent_question=task_type&intent_answer=unknown&intent_source=classifier"
+		"&cache_status=hit&mirror_hit=true&intent_question=task_type&intent_answer=unknown&intent_source=classifier" +
+		"&price_warn=fallback"
 	req := httptest.NewRequest(http.MethodGet, url, nil)
 	_, err := ReportLogsAction(req)
 	require.NoError(t, err)
@@ -316,6 +317,8 @@ func TestReportLogsAction_CacheMirrorIntentFilters(t *testing.T) {
 	assert.Equal(t, "unknown", *gotQuery.IntentAnswer)
 	require.NotNil(t, gotQuery.IntentSource)
 	assert.Equal(t, "classifier", *gotQuery.IntentSource)
+	require.NotNil(t, gotQuery.PriceWarn)
+	assert.Equal(t, "fallback", *gotQuery.PriceWarn)
 }
 
 // TestReportTimeSeriesAction_Dimension 验证 timeseries 可选 dimension 参数绑定。
@@ -348,6 +351,7 @@ func TestReportLogsAction_InvalidParams(t *testing.T) {
 		"status_codes=200,abc",
 		"mirror_hit=not-bool",
 		"intent_source=bogus",
+		"price_warn=bogus",
 	}
 	for _, one := range cases {
 		req := httptest.NewRequest(http.MethodGet, "/open-api/v1/report/logs?"+testQuery+"&"+one, nil)

@@ -1350,6 +1350,27 @@ func TestNewBfeClusterConf(t *testing.T) {
 		assert.False(t, *nue.RedactSecrets)
 	})
 
+	t.Run("price_miss_action export (issue #1479)", func(t *testing.T) {
+		providerKeyTable := map[string][]iprovider.ProviderKey{
+			"openai": {{Name: "key-primary", Key: "sk-aaaaaaaaaaaa"}},
+		}
+		providerProtocolTable := map[string][]string{"openai": {"openai"}}
+
+		exportAction := func(c *Cluster) string {
+			conf, err := NewBfeClusterConf(context.Background(), "v1", []*Cluster{c}, nil,
+				providerKeyTable, providerProtocolTable, nil, nil, nil)
+			assert.NoError(t, err)
+			return (*conf.Config)["c1"].AIConf.PriceMissAction
+		}
+
+		// unset -> empty string; BFE normalizes it to fallback_chat.
+		assert.Equal(t, "", exportAction(newTestClusterLLMWithoutNue()))
+
+		set := newTestClusterLLMWithoutNue()
+		set.LLMConfig.PriceMissAction = lib.PString("reject")
+		assert.Equal(t, "reject", exportAction(set))
+	})
+
 	t.Run("LLM config", func(t *testing.T) {
 		providerKeyTable := map[string][]iprovider.ProviderKey{
 			"openai": {

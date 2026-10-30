@@ -144,7 +144,7 @@ func TestClusters_Create(t *testing.T) {
 				"basic": map[string]interface{}{
 					"protocol": "http",
 					"connection": map[string]interface{}{
-						"max_idle_conn_per_rs": 0,
+						"max_idle_conn_per_rs":   0,
 						"cancel_on_client_close": false,
 					},
 					"retries": map[string]interface{}{
@@ -154,11 +154,11 @@ func TestClusters_Create(t *testing.T) {
 						"req_write_buffer_size": 512,
 					},
 					"timeouts": map[string]interface{}{
-						"timeout_conn_serv":        50000,
-						"timeout_response_header":  50000,
-						"timeout_readbody_client":  30000,
+						"timeout_conn_serv":         50000,
+						"timeout_response_header":   50000,
+						"timeout_readbody_client":   30000,
 						"timeout_read_client_again": 30000,
-						"timeout_write_client":     60000,
+						"timeout_write_client":      60000,
 					},
 				},
 				"sticky_sessions": map[string]interface{}{
@@ -927,5 +927,116 @@ func TestClusters_Create_NormalizeUpstreamError(t *testing.T) {
 		}
 		nueBack := readBackNue(t, name)
 		assert.Equal(t, float64(4*1024*1024), nueBack["max_body_bytes"])
+	})
+}
+
+// TestClusters_Create_PriceMissAction covers llm_config.price_miss_action
+// (issue #1479): the three-value enum round-trips, an unset value reads back
+// as null, invalid values are rejected without creating the cluster, and the
+// accepted value is exported to AIConf.PriceMissAction for BFE.
+// Design: tests/integration/tests/clusters/design.md §13.
+func TestClusters_Create_PriceMissAction(t *testing.T) {
+	provider := testutil.UniqueProviderName()
+	if _, err := testutil.CreateProvider(provider, map[string]interface{}{
+		"models": []string{"deepseek-chat"},
+	}); err != nil {
+		t.Fatalf("setup provider failed: %v", err)
+	}
+	defer testutil.DeleteProvider(provider)
+
+	bodyWithAction := func(name, action string) map[string]interface{} {
+		body := minClusterBody(name, provider)
+		body["llm_config"].(map[string]interface{})["price_miss_action"] = action
+		return body
+	}
+	readBackAction := func(t *testing.T, cluster string) (interface{}, bool) {
+		t.Helper()
+		resp, err := testutil.GetClient().Get("/open-api/v1/clusters/" + cluster)
+		if err != nil {
+			t.Fatalf("get cluster failed: %v", err)
+		}
+		testutil.AssertSuccess(t, resp)
+		var data map[string]interface{}
+		json.Unmarshal(resp.Data, &data)
+		llm, _ := data["llm_config"].(map[string]interface{})
+		v, ok := llm["price_miss_action"]
+		return v, ok
+	}
+	exportedAction := func(t *testing.T, cluster string) interface{} {
+		t.Helper()
+		resp, err := testutil.GetClient().Get("/inner-api/v1/configs/tls_conf/server_data_conf")
+		if err != nil {
+			t.Fatalf("export request failed: %v", err)
+		}
+		testutil.AssertSuccess(t, resp)
+		var data map[string]interface{}
+		json.Unmarshal(resp.Data, &data)
+		clusterConf, _ := data["ClusterConf"].(map[string]interface{})
+		config, _ := clusterConf["Config"].(map[string]interface{})
+		entry, _ := config[cluster].(map[string]interface{})
+		aiConf, _ := entry["AIConf"].(map[string]interface{})
+		return aiConf["PriceMissAction"]
+	}
+
+	for _, action := range []string{"fallback_chat", "bill_zero", "reject"} {
+		t.Run("CL-1-121 创建并回读 "+action, func(t *testing.T) {
+			name := testutil.UniqueClusterName()
+			defer testutil.DeleteCluster(name)
+			resp, err := testutil.GetClient().Post("/open-api/v1/clusters", bodyWithAction(name, action))
+			if err != nil {
+				t.Fatalf("request failed: %v", err)
+			}
+			if resp.ErrNum != 200 {
+				t.Fatalf("expected 200, got %d, ErrMsg=%s", resp.ErrNum, resp.ErrMsg)
+			}
+			if got, ok := readBackAction(t, name); !assert.True(t, ok, "price_miss_action should exist") || got != action {
+				t.Fatalf("read back price_miss_action = %v, want %q", got, action)
+			}
+			// snake_case (API) -> PascalCase (BFE export) mapping
+			if got := exportedAction(t, name); got != action {
+				t.Fatalf("exported AIConf.PriceMissAction = %v, want %q", got, action)
+			}
+		})
+	}
+
+	t.Run("CL-1-122 省略时回读为 null 且导出为空", func(t *testing.T) {
+		name := testutil.UniqueClusterName()
+		defer testutil.DeleteCluster(name)
+		resp, err := testutil.GetClient().Post("/open-api/v1/clusters", minClusterBody(name, provider))
+		if err != nil {
+			t.Fatalf("request failed: %v", err)
+		}
+		if resp.ErrNum != 200 {
+			t.Fatalf("expected 200, got %d, ErrMsg=%s", resp.ErrNum, resp.ErrMsg)
+		}
+		if got, ok := readBackAction(t, name); ok && got != nil {
+			t.Fatalf("price_miss_action = %v, want null when unset", got)
+		}
+		// bfe normalizes the empty export to fallback_chat; the key may be
+		// absent or empty here.
+		if got := exportedAction(t, name); got != nil && got != "" {
+			t.Fatalf("exported AIConf.PriceMissAction = %v, want empty when unset", got)
+		}
+	})
+
+	t.Run("CL-1-123 非法值 4xx 且不创建集群", func(t *testing.T) {
+		name := testutil.UniqueClusterName()
+		resp, err := testutil.GetClient().Post("/open-api/v1/clusters", bodyWithAction(name, "reject_all"))
+		if err != nil {
+			t.Fatalf("request failed: %v", err)
+		}
+		if resp.ErrNum == 200 {
+			testutil.DeleteCluster(name)
+			t.Fatalf("expected a 4xx for an invalid price_miss_action, got 200")
+		}
+		// read-back zero-change: the cluster must not exist
+		getResp, err := testutil.GetClient().Get("/open-api/v1/clusters/" + name)
+		if err != nil {
+			t.Fatalf("get cluster failed: %v", err)
+		}
+		if getResp.ErrNum == 200 {
+			testutil.DeleteCluster(name)
+			t.Fatalf("cluster %s must not exist after a rejected create", name)
+		}
 	})
 }

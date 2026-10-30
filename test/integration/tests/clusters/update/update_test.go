@@ -824,8 +824,8 @@ func TestClusters_Update_NormalizeUpstreamError(t *testing.T) {
 	}
 	llmWithNue := func(nue map[string]interface{}) map[string]interface{} {
 		return map[string]interface{}{
-			"models":                 []string{"deepseek-chat"},
-			"provider":               provider,
+			"models":                   []string{"deepseek-chat"},
+			"provider":                 provider,
 			"normalize_upstream_error": nue,
 		}
 	}
@@ -949,5 +949,101 @@ func TestClusters_Update_NormalizeUpstreamError(t *testing.T) {
 
 		// read-back zero change after the rejection
 		assertFullNueUnchanged(t, name)
+	})
+}
+
+// TestClusters_Update_PriceMissAction covers PATCH semantics of
+// llm_config.price_miss_action (issue #1479): omitted-field preservation,
+// value change, invalid-value rejection with read-back zero-change, and
+// PUT/PATCH symmetry. Design: tests/integration/tests/clusters/design.md §13.
+func TestClusters_Update_PriceMissAction(t *testing.T) {
+	provider := testutil.UniqueProviderName()
+	if _, err := testutil.CreateProvider(provider, map[string]interface{}{
+		"models": []string{"deepseek-chat"},
+	}); err != nil {
+		t.Fatalf("setup provider failed: %v", err)
+	}
+	defer testutil.DeleteProvider(provider)
+
+	llmWithAction := func(action string) map[string]interface{} {
+		return map[string]interface{}{
+			"models":            []string{"deepseek-chat"},
+			"provider":          provider,
+			"price_miss_action": action,
+		}
+	}
+	newClusterWithAction := func(t *testing.T) string {
+		t.Helper()
+		name := testutil.UniqueClusterName()
+		resp, err := testutil.GetClient().Post("/open-api/v1/clusters", map[string]interface{}{
+			"name":       name,
+			"llm_config": llmWithAction("reject"),
+		})
+		if err != nil {
+			t.Fatalf("setup create cluster failed: %v", err)
+		}
+		if resp.ErrNum != 200 {
+			t.Fatalf("setup create cluster: expected 200, got %d, ErrMsg=%s", resp.ErrNum, resp.ErrMsg)
+		}
+		return name
+	}
+	readBackAction := func(t *testing.T, cluster string) interface{} {
+		t.Helper()
+		resp, err := testutil.GetClient().Get("/open-api/v1/clusters/" + cluster)
+		if err != nil {
+			t.Fatalf("get cluster failed: %v", err)
+		}
+		testutil.AssertSuccess(t, resp)
+		var data map[string]interface{}
+		json.Unmarshal(resp.Data, &data)
+		llm, _ := data["llm_config"].(map[string]interface{})
+		return llm["price_miss_action"]
+	}
+
+	t.Run("CL-4-121 PATCH 省略字段保留原值", func(t *testing.T) {
+		name := newClusterWithAction(t)
+		defer testutil.DeleteCluster(name)
+		resp, err := testutil.GetClient().Patch("/open-api/v1/clusters/"+name, map[string]interface{}{
+			"description": "patch unrelated field only",
+		})
+		if err != nil {
+			t.Fatalf("patch failed: %v", err)
+		}
+		testutil.AssertSuccess(t, resp)
+		if got := readBackAction(t, name); got != "reject" {
+			t.Fatalf("price_miss_action = %v, want reject preserved", got)
+		}
+	})
+
+	t.Run("CL-4-122 PATCH 修改为 bill_zero", func(t *testing.T) {
+		name := newClusterWithAction(t)
+		defer testutil.DeleteCluster(name)
+		resp, err := testutil.GetClient().Patch("/open-api/v1/clusters/"+name, map[string]interface{}{
+			"llm_config": llmWithAction("bill_zero"),
+		})
+		if err != nil {
+			t.Fatalf("patch failed: %v", err)
+		}
+		testutil.AssertSuccess(t, resp)
+		if got := readBackAction(t, name); got != "bill_zero" {
+			t.Fatalf("price_miss_action = %v, want bill_zero", got)
+		}
+	})
+
+	t.Run("CL-4-123 非法值 4xx 且回读零变更", func(t *testing.T) {
+		name := newClusterWithAction(t)
+		defer testutil.DeleteCluster(name)
+		resp, err := testutil.GetClient().Patch("/open-api/v1/clusters/"+name, map[string]interface{}{
+			"llm_config": llmWithAction("bogus"),
+		})
+		if err != nil {
+			t.Fatalf("patch failed: %v", err)
+		}
+		if resp.ErrNum == 200 {
+			t.Fatalf("expected a 4xx for an invalid price_miss_action, got 200")
+		}
+		if got := readBackAction(t, name); got != "reject" {
+			t.Fatalf("price_miss_action = %v, want reject unchanged after 4xx", got)
+		}
 	})
 }

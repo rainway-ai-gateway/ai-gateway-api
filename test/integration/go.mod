@@ -33,7 +33,7 @@ require (
 	github.com/ClickHouse/clickhouse-go/v2 v2.40.0
 	github.com/alicebob/gopher-json v0.0.0-20230218143504-906a9b012302 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
-	github.com/bfenetworks/bfe v1.8.9 // indirect
+	github.com/bfenetworks/bfe v1.8.10-0.20261030144950-39c15e1079e9 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect

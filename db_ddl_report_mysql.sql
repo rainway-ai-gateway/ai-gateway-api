@@ -3,7 +3,7 @@
 --
 -- 本文件定义报表库（独立于控制面库，见 design-docs/sys-design/报表库设计文档.md）
 -- 的两张表：
---   1. bfe_ai_request_log  明细表（99 列，与 Doris 明细表同名同列）：由 log-reader
+--   1. bfe_ai_request_log  明细表（101 列 = 99 列 + issue #1479 缺价信号 2 列，与 Doris 明细表同名同列）：由 log-reader
 --      mod_log_mysql 插件批量幂等写入（INSERT ... ON DUPLICATE KEY UPDATE）；
 --   2. bfe_ai_metrics_1m   分钟聚合表（40 维 + 24 指标，与 Doris 同名表对齐）：
 --      由 ai-gateway-api 分钟聚合 JOB 生成，供 /open-api/v1/report/* 查询。
@@ -15,6 +15,13 @@
 --   2. 通过 mysql 客户端在目标实例执行，例如：
 --      mysql -u<user> -p<password> < db_ddl_report_mysql.sql
 --   3. 要求 MySQL >= 5.7.8（JSON 列），推荐 8.0；引擎 InnoDB，字符集 utf8mb4。
+--
+-- 存量表加列（2026-10-30 issue #1479 缺价信号字段，普通 ALTER 即可）：
+--   ALTER TABLE bfe_ai_request_log
+--     ADD COLUMN ai_price_miss TINYINT DEFAULT NULL AFTER ai_intent_questions_version,
+--     ADD COLUMN ai_price_warn VARCHAR(32) DEFAULT NULL AFTER ai_price_miss;
+--   说明：两列可空且无默认值——NULL = 该行未发生缺价（bfe 缺价时才写出）；
+--   ai_price_miss 在非 2xx 的 reject 行也会出现（bfe 写出时机为请求级）。
 --
 -- 存量表加列（2026-09-27 缓存/镜像/意图字段，普通 ALTER 即可）：
 --   ALTER TABLE bfe_ai_request_log
@@ -190,6 +197,11 @@ CREATE TABLE IF NOT EXISTS bfe_ai_request_log (
     ai_intent_latency_us    BIGINT        DEFAULT NULL,
     ai_intent_cache_hit     TINYINT       DEFAULT NULL,
     ai_intent_questions_version VARCHAR(32) NOT NULL DEFAULT '',
+    -- 缺价信号（2026-10-30 加列，issue #1479，bfe-access-pb v0.3.17 字段 763/766；
+    -- NULL = 未发生缺价。ai_price_warn 取值：fallback/no_entry/no_baseline/
+    -- reject/subitem_missing/no_model_table；与 log-reader 扩列后列序一致）
+    ai_price_miss           TINYINT       DEFAULT NULL,
+    ai_price_warn           VARCHAR(32)   DEFAULT NULL,
     -- 幂等键：请求级判别列 logid 入键后，同秒同 Key 同模型的并发请求各自成行；
     -- 只有同一请求重放（同 logid）才命中覆盖，重发/-b 补读仍幂等（issue #1417）。
     -- 键长 (256+256+128)*4 + 长度字节 + 5(log_time) + 8(BIGINT) ≈ 2579 字节 < 3072

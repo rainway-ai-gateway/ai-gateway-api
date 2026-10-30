@@ -677,6 +677,56 @@ func (s *fakeRowScanner) Scan(dest ...interface{}) error {
 	return nil
 }
 
+// TestLogWhere_PriceWarn 验证缺价形态过滤进 WHERE（issue #1479）。
+func TestLogWhere_PriceWarn(t *testing.T) {
+	shape := "reject"
+	f := &ireport.LogFilter{
+		Filter:    ireport.Filter{Start: testStart, End: testEnd},
+		PriceWarn: &shape,
+	}
+	query, args, err := buildLogsCountSQL("bfe_ai_request_log", f)
+	require.NoError(t, err)
+	assert.Contains(t, query, "ai_price_warn=?")
+	assert.Equal(t, []interface{}{"reject", testStart, testEnd}, args)
+}
+
+// TestScanLogRow_PriceMissColumns 验证两列缺价字段按投影列序映射到 LogRow：
+// ai_price_miss 的 TINYINT 转 bool，ai_price_warn 原样透传（issue #1479）。
+func TestScanLogRow_PriceMissColumns(t *testing.T) {
+	values := make([]interface{}, len(logRowFields))
+	for i := range values {
+		values[i] = sql.NullString{}
+	}
+	values[0] = sql.NullInt64{Int64: 1, Valid: true}          // logid
+	values[1] = sql.NullInt64{Int64: 1789466410, Valid: true} // log_time
+	// 列序与 logRowFields 一致：cost_value / cost_currency 之后两列。
+	idx := 0
+	for i, field := range logRowFields {
+		if field == "ai_price_miss" {
+			idx = i
+			break
+		}
+	}
+	require.NotZero(t, idx, "ai_price_miss must be in logRowFields")
+	values[idx] = sql.NullInt64{Int64: 1, Valid: true}
+	values[idx+1] = sql.NullString{String: "reject", Valid: true}
+
+	row, err := scanLogRow(&fakeRowScanner{values: values})
+	require.NoError(t, err)
+	require.NotNil(t, row.PriceMiss)
+	assert.True(t, *row.PriceMiss)
+	require.NotNil(t, row.PriceWarn)
+	assert.Equal(t, "reject", *row.PriceWarn)
+
+	// NULL 保持 nil（未发生缺价的行）
+	values[idx] = sql.NullInt64{}
+	values[idx+1] = sql.NullString{}
+	row, err = scanLogRow(&fakeRowScanner{values: values})
+	require.NoError(t, err)
+	assert.Nil(t, row.PriceMiss)
+	assert.Nil(t, row.PriceWarn)
+}
+
 // TestScanLogRow_CacheMirrorIntentColumns 验证明细行扫描：10 个新列按
 // 投影列序映射到 LogRow，TINYINT 列转 bool，NULL 保持 nil。
 func TestScanLogRow_CacheMirrorIntentColumns(t *testing.T) {
@@ -690,16 +740,16 @@ func TestScanLogRow_CacheMirrorIntentColumns(t *testing.T) {
 		values = append(values, sql.NullString{})
 	}
 	values = append(values,
-		sql.NullString{String: "hit", Valid: true},       // ai_cache_status
-		sql.NullInt64{Int64: 1, Valid: true},             // mirror_hit
-		sql.NullString{String: "mirror-bj", Valid: true}, // mirror_cluster
-		sql.NullString{String: "task_type", Valid: true}, // ai_intent_question
-		sql.NullString{String: "coding", Valid: true},    // ai_intent_answer
-		sql.NullFloat64{Float64: 0.95, Valid: true},      // ai_intent_confidence
+		sql.NullString{String: "hit", Valid: true},        // ai_cache_status
+		sql.NullInt64{Int64: 1, Valid: true},              // mirror_hit
+		sql.NullString{String: "mirror-bj", Valid: true},  // mirror_cluster
+		sql.NullString{String: "task_type", Valid: true},  // ai_intent_question
+		sql.NullString{String: "coding", Valid: true},     // ai_intent_answer
+		sql.NullFloat64{Float64: 0.95, Valid: true},       // ai_intent_confidence
 		sql.NullString{String: "classifier", Valid: true}, // ai_intent_source
-		sql.NullInt64{Int64: 1200, Valid: true},          // ai_intent_latency_us
-		sql.NullInt64{Int64: 0, Valid: true},             // ai_intent_cache_hit
-		sql.NullString{String: "v3", Valid: true},        // ai_intent_questions_version
+		sql.NullInt64{Int64: 1200, Valid: true},           // ai_intent_latency_us
+		sql.NullInt64{Int64: 0, Valid: true},              // ai_intent_cache_hit
+		sql.NullString{String: "v3", Valid: true},         // ai_intent_questions_version
 	)
 	require.Len(t, values, len(logRowFields))
 

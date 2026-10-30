@@ -141,7 +141,7 @@ type RouteRuleExportData struct {
 
 其中 `RouteTable` 包含产品级高级路由规则（来自 `route_advance_rules`），`ClusterConf` 包含集群转发参数。
 
-> 说明：当管理面 Cluster 配置了 `llm_config` 时，导出后的 `ClusterConf.Config.<cluster_name>.AIConf` 会包含模型映射、认证密钥、模型定价表、前缀路由裁剪开关、协议风格列表、Key 亲和性策略以及上游错误体归一配置，供 BFE 侧 AI 转发模块使用。`AIConf` 由 `llm_config.models`/`model_mappings`/`keys`/`key_policy`/`key_affinity`/`normalize_upstream_error`/`provider`/`match_prefix`/`strip_prefix` 以及 provider 的 `model_protocols` 转换而来，字段位置为 `ClusterConf.Config.<cluster_name>.AIConf`。
+> 说明：当管理面 Cluster 配置了 `llm_config` 时，导出后的 `ClusterConf.Config.<cluster_name>.AIConf` 会包含模型映射、认证密钥、模型定价表、前缀路由裁剪开关、协议风格列表、Key 亲和性策略以及上游错误体归一配置，供 BFE 侧 AI 转发模块使用。`AIConf` 由 `llm_config.models`/`model_mappings`/`keys`/`key_policy`/`key_affinity`/`normalize_upstream_error`/`price_miss_action`/`provider`/`match_prefix`/`strip_prefix` 以及 provider 的 `model_protocols` 转换而来，字段位置为 `ClusterConf.Config.<cluster_name>.AIConf`。`llm_config.price_miss_action`（snake_case）映射为 `AIConf.PriceMissAction`（PascalCase）；nil/空串不导出，bfe 侧 `AIConfCheck` 归一为 `fallback_chat`（issue #1479）。
 >
 > `AIConf.Provider` 对应 OpenAPI `llm_config.provider`，用于关联 `model_prices` 表；`AIConf.ModelTable` 由 InnerAPI 根据 `Provider` 查询 `model_prices` 自动填充，不在 OpenAPI `/clusters` 端点中展示。`AIConf.MatchPrefix`/`StripPrefix` 对应 OpenAPI `llm_config.match_prefix`/`strip_prefix`，由 BFE 在转发前决定是否裁剪请求 `model` 字段前缀。`AIConf.ModelProtocols` 对应 Provider 的 `model_protocols`，供 BFE 判断请求协议风格是否被当前集群支持，例如识别 `anthropic` 请求并注入 `x-api-key` 与 `anthropic-version` 头。`model_prices` 变更后不会同步触发 InnerAPI 推送，BFE/Conf Agent 按自身周期拉取配置并热加载。
 

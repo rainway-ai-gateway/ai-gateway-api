@@ -13,7 +13,7 @@
 | 模型层设计文档 | [模型层设计文档.md](./模型层设计文档.md) | 描述 `model/` 层的子包职责、Manager + Storager 接口的分层模式、Param/Filter 设计、事务管理、典型业务流程以及各业务模型（API-Key、Entity、Provider、Cluster、Quota、RateLimit、Route 等）的交互方式。 |
 | 存储层设计文档 | [存储层设计文档.md](./存储层设计文档.md) | 描述 `storage/rdb` 层的 DAO + Storage 两层结构、通用 DAO 设计模式、事务与连接管理、42 张表的 DAO 映射关系以及 Storage 实现如何向上暴露接口供模型层调用。 |
 | 数据库设计文档 | [数据库设计文档.md](./数据库设计文档.md) | 描述 `ai-gateway-api` 当前实现中全部 42 张持久化表（2026-10-07 新增 `batch_files`/`batch_tasks` 后；原 36/38 的口径不一致已一并修正）的字段、约束、索引、JSON 字段结构以及表间逻辑关系，覆盖基础配置、集群、路由、证书、API-Key、Entity、配额、限流、AI 缓存、AI 上下文压缩、AI 意图、模型定价、批量任务、操作日志、安全（密钥静态加密）等模块。 |
-| 报表库设计文档 | [报表库设计文档.md](./报表库设计文档.md) | 描述独立报表库（`bfe_report`）的两张表设计：`bfe_ai_request_log` 明细表（99 列，含 2026-09-27 缓存/镜像/意图 10 列；幂等键/空值语义/按天 RANGE 分区/索引）与 `bfe_ai_metrics_1m` 分钟聚合表（40 维 + 24 指标，含 `ai_cache_status`/`mirror_hit`/`ai_intent_answer` 3 个维度列，与 Doris 对齐、不设唯一键的理由）、聚合与分区管理语义、账号权限矩阵、容量建议与列演进规则；DDL 归 `db_ddl_report_mysql.sql`。 |
+| 报表库设计文档 | [报表库设计文档.md](./报表库设计文档.md) | 描述独立报表库（`bfe_report`）的两张表设计：`bfe_ai_request_log` 明细表（101 列，含 2026-09-27 缓存/镜像/意图 10 列与 2026-10-30 缺价信号 `ai_price_miss`/`ai_price_warn` 2 列；幂等键/空值语义/按天 RANGE 分区/索引）与 `bfe_ai_metrics_1m` 分钟聚合表（40 维 + 24 指标，含 `ai_cache_status`/`mirror_hit`/`ai_intent_answer` 3 个维度列，与 Doris 对齐、不设唯一键的理由）、聚合与分区管理语义、账号权限矩阵、容量建议与列演进规则；DDL 归 `db_ddl_report_mysql.sql`。 |
 
 ---
 

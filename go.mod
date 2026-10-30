@@ -5,7 +5,7 @@ go 1.24.0
 require (
 	github.com/BurntSushi/toml v0.3.1
 	github.com/DATA-DOG/go-sqlmock v1.4.0
-	github.com/bfenetworks/bfe v1.8.9
+	github.com/bfenetworks/bfe v1.8.10-0.20261030144950-39c15e1079e9
 	github.com/bfenetworks/go-lib v0.0.4
 	github.com/codegangsta/negroni v1.0.0
 	github.com/didi/gendry v1.7.0

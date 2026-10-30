@@ -89,7 +89,7 @@ var AIKeyPolicySchema = &testutil.ObjectSchema{
 // AIConfSchema ClusterConf.Config.<cluster>.AIConf 的 schema
 var AIConfSchema = &testutil.ObjectSchema{
 	Required: []string{"KeyPolicy"},
-	Optional: []string{"Keys", "ModelMappings", "ModelTable", "MatchPrefix", "StripPrefix", "ModelProtocols", "NormalizeUpstreamError"},
+	Optional: []string{"Keys", "ModelMappings", "ModelTable", "MatchPrefix", "StripPrefix", "ModelProtocols", "NormalizeUpstreamError", "PriceMissAction"},
 	Fields: map[string]testutil.FieldSpec{
 		"Keys":           {Type: testutil.TypeArray},
 		"KeyPolicy":      {Type: testutil.TypeObject, Nested: AIKeyPolicySchema},
@@ -99,6 +99,7 @@ var AIConfSchema = &testutil.ObjectSchema{
 		"StripPrefix":    {Type: testutil.TypeBool},
 		"ModelProtocols": {Type: testutil.TypeArray, Item: &testutil.FieldSpec{Type: testutil.TypeString}},
 		"NormalizeUpstreamError": {Type: testutil.TypeObject},
+		"PriceMissAction":        {Type: testutil.TypeString},
 	},
 }
 

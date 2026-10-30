@@ -3062,7 +3062,30 @@ URI：`c`
 - 并发（检查项 #10）：本变更为纯配置透传，无 ID 生成/行锁路径，**不适用**，
   不新增 `//go:build mysql` 用例。
 
-## 13. 注意事项
+## 13. 缺价动作配置 `price_miss_action`（issue #1479）
+
+合同依据：`design-docs/api-define/OpenAPI接口定义/clusters.md` LLM 配置表
+`price_miss_action` 行与 `design-docs/modifications/2026-10-30-issue-1479-price-miss-action/api-changes.md`。
+
+本批用例（create：CL-1-121/122/123；update：CL-4-121/122/123）覆盖：
+
+| 编号 | 验证点 | 检查项 |
+|------|--------|--------|
+| CL-1-121 | 三值 `fallback_chat`/`bill_zero`/`reject` 均可创建，GET 回读一致，InnerAPI 导出 `AIConf.PriceMissAction`（snake→Pascal 映射）一致 | #12 导出断言 |
+| CL-1-122 | 省略字段回读为 null，导出为空（bfe 归一为 `fallback_chat`） | 缺省语义 |
+| CL-1-123 | 非法值（`reject_all`）4xx 且**不创建集群**（GET 回读零变更） | #2 4xx 零变更 |
+| CL-4-121 | PATCH 只改无关字段时 `price_miss_action` 原值保留 | #1 省略字段保留 |
+| CL-4-122 | PATCH 整体替换 `llm_config.price_miss_action` 生效 | #3 变更语义 |
+| CL-4-123 | 非法值 PATCH 4xx 后回读零变更 | #2 4xx 零变更 |
+
+### 13.2 设计要点
+
+- 三值是枚举字符串，非法值由 `lib/validate` 拦截（与 bfe `AIConfCheck` 同源），不需要单独的错误码；
+- 导出映射为 snake_case → PascalCase（`price_miss_action` → `PriceMissAction`），未设置为空串；bfe 侧空串归一为 `fallback_chat`（已由 bfe SC42 覆盖三态行为本身）；
+- 纯配置透传：无 ID 生成/行锁路径，检查项 #10（MySQL 并发）不适用，不新增 `//go:build mysql` 用例；
+- 字段随 `llm_config` 整体快照落审计，#7 不单独展开。
+
+## 14. 注意事项
 
 1. v0.3.0 已删除 `/clusters/{cluster_name}/ready`、`/model-providers`、`/models`。
 2. 返回中不应出现 `ready`、`sub_clusters`、`scheduler`、`Instance.tags`、`llm_config.service_name`、`llm_config.group`。

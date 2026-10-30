@@ -646,6 +646,7 @@ func TestParamValidation(t *testing.T) {
 		{"keyword_too_long", "/logs", with(windowQuery(), "keyword", longKeyword)},
 		{"invalid_mirror_hit", "/logs", with(windowQuery(), "mirror_hit", "not-bool")},
 		{"invalid_intent_source", "/logs", with(windowQuery(), "intent_source", "bogus")},
+		{"invalid_price_warn", "/logs", with(windowQuery(), "price_warn", "bogus")},
 		{"invalid_timeseries_dimension", "/timeseries", with(windowQuery(), "metric", "qps", "dimension", "model")},
 		// issue #233：stream 非法布尔值（共有过滤项 tag 绑定路径）五个端点全部 422
 		{"invalid_stream_overview", "/overview", with(windowQuery(), "stream", "not-bool")},

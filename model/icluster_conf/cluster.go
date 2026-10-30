@@ -248,7 +248,12 @@ type LLMConfig struct {
 	KeyPolicy              *KeyPolicy              `json:"key_policy"`               // key routing policy
 	KeyAffinity            *KeyAffinity            `json:"key_affinity"`             // session-level key affinity
 	NormalizeUpstreamError *NormalizeUpstreamError `json:"normalize_upstream_error"` // upstream error normalization (unified error codes)
-	Provider               *string                 `json:"provider"`                 // provider name; required
+	// PriceMissAction controls bfe's behavior when the (model, mode) price
+	// entry is absent (issue #1479): "fallback_chat" (bill at the model's
+	// chat-mode price, default when unset), "bill_zero" (bill 0) or "reject"
+	// (reject before forwarding). Nil keeps bfe's default (fallback_chat).
+	PriceMissAction *string `json:"price_miss_action"`
+	Provider        *string `json:"provider"` // provider name; required
 
 	// MatchPrefix defines the provider/model prefix this cluster matches.
 	// Must end with '/' to avoid matching model names themselves.
@@ -1630,6 +1635,9 @@ func newAIConf(llmConfig *LLMConfig, modelTable *cluster_conf.ModelTable,
 		aiConf.KeyPolicy.SessionAffinityRedisPrefix = derefString(llmConfig.KeyAffinity.RedisPrefix, "bfe:ai:key_affinity")
 		aiConf.KeyPolicy.SessionAffinityPenaltyEnable = derefBool(llmConfig.KeyAffinity.PenaltyEnable, true)
 	}
+	// issue #1479: empty string keeps the field unset on the bfe side
+	// (AIConfCheck normalizes empty to the fallback_chat default).
+	aiConf.PriceMissAction = derefString(llmConfig.PriceMissAction, "")
 	if llmConfig.NormalizeUpstreamError != nil {
 		aiConf.NormalizeUpstreamError = &cluster_conf.UpstreamErrorNormalizeConf{
 			Enabled:            derefBool(llmConfig.NormalizeUpstreamError.Enabled, false),

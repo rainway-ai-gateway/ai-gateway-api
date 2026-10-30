@@ -112,10 +112,22 @@ var intentSources = map[string]bool{
 	"cache":           true,
 }
 
+// priceWarnShapes is the validation set of the ai_price_warn log filter
+// (mirrors the ai_price_warn log field, issue #1479).
+var priceWarnShapes = map[string]bool{
+	"fallback":        true,
+	"no_entry":        true,
+	"no_baseline":     true,
+	"reject":          true,
+	"subitem_missing": true,
+	"no_model_table":  true,
+}
+
 // bindLogsFilterParams binds the logs-only exact-match filter parameters
 // introduced with the cache/mirror/intent log fields: cache_status,
 // mirror_hit, intent_question, intent_answer and intent_source (see
-// design-docs modifications/2026-09-27-report-cache-mirror-intent-fields).
+// design-docs modifications/2026-09-27-report-cache-mirror-intent-fields),
+// plus price_warn for the missing-price shape (issue #1479).
 func bindLogsFilterParams(req *http.Request, logsQuery *ireport.LogsQuery) error {
 	if raw := req.Form.Get("cache_status"); raw != "" {
 		logsQuery.CacheStatus = &raw
@@ -138,6 +150,12 @@ func bindLogsFilterParams(req *http.Request, logsQuery *ireport.LogsQuery) error
 			return xerror.WrapParamErrorWithMsg("invalid intent_source: %s", raw)
 		}
 		logsQuery.IntentSource = &raw
+	}
+	if raw := req.Form.Get("price_warn"); raw != "" {
+		if !priceWarnShapes[raw] {
+			return xerror.WrapParamErrorWithMsg("invalid price_warn: %s", raw)
+		}
+		logsQuery.PriceWarn = &raw
 	}
 	return nil
 }

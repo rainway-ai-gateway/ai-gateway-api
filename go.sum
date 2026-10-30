@@ -20,8 +20,8 @@ github.com/asergeyev/nradix v0.0.0-20170505151046-3872ab85bb56 h1:Wi5Tgn8K+jDcBY
 github.com/asergeyev/nradix v0.0.0-20170505151046-3872ab85bb56/go.mod h1:8BhOLuqtSuT5NZtZMwfvEibi09RO3u79uqfHZzfDTR4=
 github.com/beorn7/perks v1.0.1 h1:VlbKKnNfV8bJzeqoa4cOKqO6bYr3WgKZxO8Z16+hsOM=
 github.com/beorn7/perks v1.0.1/go.mod h1:G2ZrVWU2WbWT9wwq4/hrbKbnv/1ERSJQ0ibhJ6rlkpw=
-github.com/bfenetworks/bfe v1.8.9 h1:fCTy/oeKkvyfV3I9PKD5gaEG/iK0eby2R/tw0pfdQY0=
-github.com/bfenetworks/bfe v1.8.9/go.mod h1:l++wzS6psPa1hwx1nkysxmcBEJNrHwm+uSorlBLzBfA=
+github.com/bfenetworks/bfe v1.8.10-0.20261030144950-39c15e1079e9 h1:/FQM/HhOaLZko1eTKRGnjgdrb7WBMbondT3wy8rFUlI=
+github.com/bfenetworks/bfe v1.8.10-0.20261030144950-39c15e1079e9/go.mod h1:4HKWJwue2PtmXYTLfJuxYYul/J+pBGm0GJm76N8Bc94=
 github.com/bfenetworks/go-lib v0.0.4 h1:RcC+A4jUQoMvQS0ut5MLlgwp8lkJUlJq3Y3Qeop576E=
 github.com/bfenetworks/go-lib v0.0.4/go.mod h1:DNiKiff30CaX7uOUGJpP85VyTn+JSFoY9gfG2AxmPgM=
 github.com/cespare/xxhash/v2 v2.3.0 h1:UL815xU9SqsFlibzuggzjXhog7bL6oX9BbNZnL2UFvs=

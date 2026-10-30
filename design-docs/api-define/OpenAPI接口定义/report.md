@@ -48,6 +48,8 @@
   "ai_tpot_us": 25000,
   "ai_cost_value": 0.00005,
   "ai_cost_currency": "USD",
+  "ai_price_miss": true,
+  "ai_price_warn": "fallback",
   "ai_rate_limit_hits": null,
   "ai_auth_reject_quota_plans": null,
   "ai_cache_status": "hit",
@@ -87,6 +89,8 @@
 | `all_time` | int | 请求总耗时（毫秒） |
 | `ai_ttft_us` / `ai_tpot_us` | int64 | TTFT / TPOT（微秒）；未设置（非流式）为 **0**（历史口径：入库未做空值区分，与意图字段的 null 语义不同） |
 | `ai_cost_value` / `ai_cost_currency` | number / string | 成本金额（元/美元，服务端已完成 ÷1e8 换算）/ 币种；无成本为 null |
+| `ai_price_miss` | bool | 是否发生过缺价（请求的「模型 × 接口类型」无价格条目：含回退计费 / 按 0 / 转发前拒绝 / 价格表缺失）；**非 2xx 的拒绝行也会出现**，筛选时建议叠加 `res_status_code`；未缺价为 null |
+| `ai_price_warn` | string | 缺价形态：`fallback`（回退 chat 价计费）/ `no_entry`（按 0）/ `no_baseline`（无 chat 基线按 0）/ `reject`（转发前拒绝）/ `subitem_missing`（回退条目缺子项价格）/ `no_model_table`（价格表缺失）；多因取最具体；未缺价为 null |
 | `ai_rate_limit_hits` / `ai_auth_reject_quota_plans` | string | JSON 原文（限流命中列表 / 被拒绝配额计划），未命中为 null |
 | `ai_cache_status` | string | 缓存命中状态：`hit` / `miss` / `skip`；空串=未启用缓存 |
 | `mirror_hit` | bool | 是否被流量镜像 |

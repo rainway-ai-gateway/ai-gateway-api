@@ -72,6 +72,7 @@
             "max_body_bytes": 65536,
             "redact_secrets": true
         },
+        "price_miss_action": "fallback_chat",
         "provider": "deepseek",
         "match_prefix": "deepseek/",
         "strip_prefix": true
@@ -192,6 +193,7 @@
 | key_policy| object |  Key 路由策略 | N | 多 Key 时的选择策略、重试与退避配置 | 非必填；默认见下方 表：Key 路由策略；`strategy` 本版仅支持 `weighted_random` |
 | key_affinity| object |  Key 亲和性配置 | N | 基于 Redis + `ClientKeyId` 的会话级 Key 亲和性 | 非必填；默认见下方 表：Key 亲和性配置 |
 | normalize_upstream_error| object |  上游错误体归一配置 | N | 上游厂商错误归一为网关统一错误码与 OpenAI 兼容错误体（含状态码重映射、凭证脱敏、SSE 错误事件改写），按集群独立灰度 | 非必填；默认见下方 表：上游错误归一配置；缺省 = 关闭（上游错误原样透传） |
+| price_miss_action| string |  缺价处置动作 | N | 请求的（模型， 接口类型）无价格条目时的动作：`fallback_chat`（按同模型 chat 价回退计费，**默认**）、`bill_zero`（按 0 计费）、`reject`（转发前拒绝：HTTP 503 + `error.code=PRICE_NOT_CONFIGURED`，不调用上游、不计费）；`reject` 下集群价格表整体缺失同样拒绝 | 非必填；默认 `fallback_chat`；取值须为 `fallback_chat` / `bill_zero` / `reject`；控制台新建集群显式落值，省略等价默认 |
 | provider| string |  所属 provider | Y | 用于关联 provider、解析后端实例池/key 明文/生成 `ModelTable` | 必填；非空；必须引用 `/providers` 中已存在的 provider |
 | match_prefix| string |  需要匹配的 provider/model 前缀 | N | 例如 `openrouter/`；用于 OpenRouter 等聚合 provider 场景；必须以 `/` 结尾 | 非必填；`strip_prefix=true` 时必填 |
 | strip_prefix| bool |  是否裁剪 `match_prefix` 指定前缀 | N | `true` 时转发给下游前会从请求 `model` 字段中去掉该前缀；`false` 时仅用于路由标识，不裁剪 | 非必填；默认 `false` |

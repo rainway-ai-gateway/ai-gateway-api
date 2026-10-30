@@ -175,6 +175,17 @@ func TestNormalizeLLMConfig(t *testing.T) {
 		assert.Nil(t, normalizeLLMConfig(nil))
 	})
 
+	t.Run("copies price_miss_action (issue #1479)", func(t *testing.T) {
+		in := &icluster_conf.LLMConfig{PriceMissAction: lib.PString("reject")}
+		got := normalizeLLMConfig(in)
+		require.NotNil(t, got)
+		require.NotNil(t, got.PriceMissAction)
+		assert.Equal(t, "reject", *got.PriceMissAction)
+
+		// nil stays nil: bfe applies the fallback_chat default.
+		assert.Nil(t, normalizeLLMConfig(&icluster_conf.LLMConfig{}).PriceMissAction)
+	})
+
 	t.Run("copies prefix fields", func(t *testing.T) {
 		in := &icluster_conf.LLMConfig{
 			Models:      []string{"gpt-4"},

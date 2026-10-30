@@ -522,6 +522,18 @@ func TestLLMConfig(t *testing.T) {
 	}
 	assert.NoError(t, LLMConfig(&c15))
 
+	// valid price_miss_action (issue #1479): three values + empty
+	for _, action := range []string{"fallback_chat", "bill_zero", "reject", ""} {
+		cpm := *c
+		cpm.PriceMissAction = lib.PString(action)
+		assert.NoError(t, LLMConfig(&cpm), action)
+	}
+
+	// invalid price_miss_action
+	cpmBad := *c
+	cpmBad.PriceMissAction = lib.PString("reject_all")
+	assert.Error(t, LLMConfig(&cpmBad))
+
 	// invalid normalize_upstream_error.unrecognized_action
 	c16 := *c
 	c16.NormalizeUpstreamError = &icluster_conf.NormalizeUpstreamError{

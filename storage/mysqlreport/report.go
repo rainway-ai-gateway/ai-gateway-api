@@ -196,6 +196,9 @@ func logWhere(f *ireport.LogFilter) map[string]interface{} {
 	if f.IntentSource != nil {
 		where["ai_intent_source ="] = *f.IntentSource
 	}
+	if f.PriceWarn != nil {
+		where["ai_price_warn ="] = *f.PriceWarn
+	}
 	return where
 }
 
@@ -495,6 +498,8 @@ var logRowFields = []string{
 	"ai_tpot_us",
 	"ai_cost_value",
 	"ai_cost_currency",
+	"ai_price_miss",
+	"ai_price_warn",
 	"ai_rate_limit_hits",
 	"ai_auth_reject_quota_plans",
 	"level1Name",
@@ -1067,6 +1072,8 @@ func scanLogRow(scanner metricRowScanner) (*ireport.LogRow, error) {
 		tpotUs              sql.NullInt64
 		costValue           sql.NullInt64
 		costCurrency        sql.NullString
+		priceMiss           sql.NullInt64
+		priceWarn           sql.NullString
 		rateLimitHits       sql.NullString
 		authRejectQuotaPlan sql.NullString
 		level1Name          sql.NullString
@@ -1119,6 +1126,8 @@ func scanLogRow(scanner metricRowScanner) (*ireport.LogRow, error) {
 		&tpotUs,
 		&costValue,
 		&costCurrency,
+		&priceMiss,
+		&priceWarn,
 		&rateLimitHits,
 		&authRejectQuotaPlan,
 		&level1Name,
@@ -1174,6 +1183,8 @@ func scanLogRow(scanner metricRowScanner) (*ireport.LogRow, error) {
 		TPOTUs:              nullInt64Ptr(tpotUs),
 		CostValue:           nullCostAmountPtr(costValue),
 		CostCurrency:        nullStringPtr(costCurrency),
+		PriceMiss:           nullBoolPtr(priceMiss),
+		PriceWarn:           nullStringPtr(priceWarn),
 		RateLimitHits:       nullStringPtr(rateLimitHits),
 		AuthRejectQuotaPlan: nullStringPtr(authRejectQuotaPlan),
 		Level1Name:          nullStringPtr(level1Name),

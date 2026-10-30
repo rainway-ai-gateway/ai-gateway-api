@@ -1145,6 +1145,17 @@ func LLMConfig(c *icluster_conf.LLMConfig) error {
 		}
 	}
 
+	// Validate price_miss_action (issue #1479); the rules mirror the BFE
+	// AIConfCheck exactly so an accepted config never fails BFE loading.
+	if c.PriceMissAction != nil {
+		switch *c.PriceMissAction {
+		case "", "fallback_chat", "bill_zero", "reject":
+		default:
+			return xerror.WrapParamErrorWithMsg(
+				"llm_config.price_miss_action must be fallback_chat, bill_zero or reject")
+		}
+	}
+
 	// Validate normalize_upstream_error; the rules mirror the BFE
 	// AIConfCheck exactly so an accepted config never fails BFE loading.
 	if c.NormalizeUpstreamError != nil {
