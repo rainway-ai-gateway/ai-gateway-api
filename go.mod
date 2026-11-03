@@ -80,10 +80,13 @@ require (
 	modernc.org/sqlite v1.23.1 // indirect
 )
 
-// 本地联调时可临时切换：replace github.com/bfenetworks/bfe => ../bfe
-
-// TODO(dep-bump): 临时依赖，勿随功能分支合入主线。
-// 指向本地 bfe 工作分支（含 AIConf.EnsureReasoningContent，且已下线 bfe_tls）。
-// 上游发布含该字段的版本后：删除本行，并把 require 的 bfe 版本 bump 到该版本
+// TODO(dep-bump): 临时依赖。bfe 上游未发布含 AIConf.EnsureReasoningContent 的版本，
+// 这里 replace 到开发分支 v1.9.0-dev 的提交 3b5d05a6（该提交同时下线了 bfe_tls，
+// 故需配合 model/iprotocol 的 crypto/tls 适配）。
+// fork 保留了原 module path（github.com/bfenetworks/bfe），因此 replace 合法；
+// 伪版本基线按 fork 上可达的最高 tag（v1.4.0）计算。
+// 本地联调如需切换：改为 replace github.com/bfenetworks/bfe => ../bfe。
+// 上游发布对应版本后：删除本行，并把 require 的 bfe 版本 bump 到该版本
 // （届时 go mod tidy 会自动补 expr-lang/expr、移除 tjfoc/gmsm）。
-replace github.com/bfenetworks/bfe => ../bfe
+
+replace github.com/bfenetworks/bfe => github.com/mileszhang2016/bfe v1.4.1-0.20261103140728-3b5d05a68931

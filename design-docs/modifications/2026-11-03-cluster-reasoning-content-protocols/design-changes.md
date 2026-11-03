@@ -139,7 +139,7 @@ api 直接 import bfe 的 `cluster_conf` 包（`model/icluster_conf/cluster.go:3
 - 当前 `bfe` 工作分支（`v1.9.0-dev`）已按 TLS 改造下线了 `bfe_tls` 包，而 api 仍 import 它（`model/iprotocol/certificate.go:24`、`:174`）；把 bfe 指到该分支后 api 编译报 `no required module provides package github.com/bfenetworks/bfe/bfe_tls`；
 - 同时该分支的依赖集已前进（`bfe_expr` → `expr-lang/expr`），`bfe_tls` 的 SM2 依赖 `tjfoc/gmsm` 随之消失；
 - **api 侧的 `bfe_tls` 下线适配已完成**（见 `2026-11-03-drop-bfe-tls-import/`：证书 key pair 校验改用标准库 `crypto/tls`）；适配后 `replace` 到该分支，全仓 `go build ./...`、`go vet ./...`、`go test ./model/... ./lib/... ./endpoints/...` 与 `test/integration` 子模块构建全部通过；
-- 因此 `go.mod` 目前**保留一条带 `TODO(dep-bump)` 注释的临时 `replace => ../bfe`**（配套 `go mod tidy` 结果：`+ expr-lang/expr`、`- tjfoc/gmsm`）。该行仅为在同工作区继续验证，**不得随功能分支合入主线**；上游发布含 `EnsureReasoningContent` 的版本后删除它并改为正常版本 bump。
+- 因此 `go.mod` 目前**保留一条带 `TODO(dep-bump)` 注释的临时 `replace`**，指向 fork（`github.com/mileszhang2016/bfe`）上 `v1.9.0-dev` 提交 `3b5d05a6` 的伪版本 `v1.4.1-0.20261103140728-3b5d05a68931`（配套 `go mod tidy` 结果：`+ expr-lang/expr`、`- tjfoc/gmsm`）。**不依赖本地目录检出**，CI 可直接构建；上游发布含 `EnsureReasoningContent` 的版本后删除该行并改为正常版本 bump。
 
 落地时的依赖路线（二选一，评审定）：
 

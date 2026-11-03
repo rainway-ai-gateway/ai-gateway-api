@@ -98,7 +98,7 @@ bump 到删除了 `bfe_tls` 的 bfe 版本还缺两个条件：
 - **代码**：`model/iprotocol/certificate.go` 去掉 `bfe_tls` import，改用 `crypto/tls.X509KeyPair`；全仓 grep 确认 `bfe_tls` 仅此一处（`bfe_tls_conf` 是配置结构体包，BFE 侧仍保留，不在本次范围）；
 - **测试**：`go test ./model/iprotocol/...` 通过；既有证书用例（匹配/不匹配/格式非法）覆盖该分支，无需新增用例；
 - **验证**：当前钉住版本下 `go build ./...`（除另一变更的字段依赖外）与 `go vet` 通过；`replace` 到 bfe 分支（已删 `bfe_tls`）后全仓 `go build ./...`、`go vet ./...`、`go test ./model/... ./lib/... ./endpoints/...`、`test/integration` 子模块 `go build` 全部通过；
-- **`go.mod` 的当前状态**：为了在同一工作区同时验证"TLS 适配 + `EnsureReasoningContent` 字段"这一最终形态，`go.mod` 现在**保留了一条带 `TODO(dep-bump)` 注释的临时 `replace => ../bfe`**，`go mod tidy` 的连带结果也一并保留（`+ github.com/expr-lang/expr`、`- github.com/tjfoc/gmsm`，后者原为 `bfe_tls` 的 SM2 依赖）。上游发布含该字段的版本后需删除 `replace` 并改为正常版本 bump——**该行不得随功能分支合入主线**；
+- **`go.mod` 的当前状态**：为了在同一工作区同时验证"TLS 适配 + `EnsureReasoningContent` 字段"这一最终形态，`go.mod` 现在**保留了一条带 `TODO(dep-bump)` 注释的临时 `replace`**——指向 bfe 开发分支 `v1.9.0-dev` 的提交 `3b5d05a6` 在 fork（`github.com/mileszhang2016/bfe`）上的伪版本 `v1.4.1-0.20261103140728-3b5d05a68931`（fork 保留原 module path，`replace` 合法），**不依赖本地目录检出**，`go mod tidy` 的连带结果也一并保留（`+ github.com/expr-lang/expr`、`- github.com/tjfoc/gmsm`，后者原为 `bfe_tls` 的 SM2 依赖）。上游发布含该字段的版本后需删除 `replace` 并改为正常版本 bump——**该行不得随功能分支合入主线**；
 - **未做**：正常的版本 bump（等待上游发布，见 §4）。
 
 ## 7. 变更沉淀评估（Step 6）
