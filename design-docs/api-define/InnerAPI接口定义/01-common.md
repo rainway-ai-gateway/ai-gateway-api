@@ -38,7 +38,15 @@ InnerAPI 与 OpenAPI 共用同一根路由的 405 处理（`endpoints/router.go`
 - 响应体为 `{"ErrNum":405,"ErrMsg":"Method Not Allowed"}`；
 - 其它错误（404/422/500 等）不携带 `Allow`。
 
-## 4. 版本控制机制
+## 4. 响应头与 CORS
+
+InnerAPI 与 OpenAPI 共用同一套 HTTP 语义（`endpoints/router.go`）：
+
+- `Req-ID`：所有响应（含路由级 404 / 405）都注入，与访问日志中的请求 ID 一致（issue #298）；
+- CORS 预检（`OPTIONS` + `Origin` + `Access-Control-Request-Method`）返回 `204` 并带 `Access-Control-Allow-*`；
+  普通 `OPTIONS` 按「方法不支持」返回 `405` + `Allow`。
+
+## 5. 版本控制机制
 
 所有导出接口支持 `version` 查询参数：
 

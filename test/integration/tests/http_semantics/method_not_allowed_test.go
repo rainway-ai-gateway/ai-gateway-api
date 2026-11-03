@@ -44,11 +44,14 @@ func TestMain(m *testing.M) {
 
 // doRaw issues the request with net/http directly: testutil.Client only
 // returns the JSON envelope, and these assertions need response headers.
-func doRaw(t *testing.T, method, path string) (*http.Response, []byte) {
+func doRaw(t *testing.T, method, path string, headers map[string]string) (*http.Response, []byte) {
 	t.Helper()
 
 	req, err := http.NewRequest(method, sm.ServerURL+path, nil)
 	require.NoError(t, err)
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
 
 	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)
@@ -114,7 +117,7 @@ func TestMethodNotAllowedAllowHeader(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			resp, body := doRaw(t, tc.method, tc.path)
+			resp, body := doRaw(t, tc.method, tc.path, nil)
 
 			assert.Equal(t, tc.wantCode, resp.StatusCode)
 			assert.Equal(t, tc.wantAllow, resp.Header.Get("Allow"))
@@ -134,4 +137,66 @@ func TestMethodNotAllowedAllowHeader(t *testing.T) {
 			assert.Equal(t, "Method Not Allowed", envelope.ErrMsg)
 		})
 	}
+}
+
+// TestCORSAndReqIDHeaders 覆盖 issue #298：CORS 预检必须 2xx + Access-Control-Allow-*，
+// 路由级 404/405 必须带 Req-ID（且与 200 的注入路径一致）。
+func TestCORSAndReqIDHeaders(t *testing.T) {
+	preflight := func(method string) map[string]string {
+		return map[string]string{
+			"Origin":                        "https://console.example.com",
+			"Access-Control-Request-Method": method,
+		}
+	}
+
+	t.Run("HS-2-001 preflight on registered route", func(t *testing.T) {
+		resp, _ := doRaw(t, http.MethodOptions, "/open-api/v1/route-tables", preflight("PATCH"))
+		require.GreaterOrEqual(t, resp.StatusCode, 200)
+		require.Less(t, resp.StatusCode, 300)
+		assert.Equal(t, "*", resp.Header.Get("Access-Control-Allow-Origin"))
+		assert.Equal(t, "PATCH", resp.Header.Get("Access-Control-Allow-Methods"))
+	})
+
+	t.Run("HS-2-002 preflight on unknown path", func(t *testing.T) {
+		resp, _ := doRaw(t, http.MethodOptions, "/open-api/v1/definitely-not-a-route", preflight("GET"))
+		require.GreaterOrEqual(t, resp.StatusCode, 200)
+		require.Less(t, resp.StatusCode, 300)
+		assert.NotEmpty(t, resp.Header.Get("Access-Control-Allow-Origin"))
+	})
+
+	t.Run("HS-2-003 404 carries Req-ID", func(t *testing.T) {
+		resp, _ := doRaw(t, http.MethodGet, "/open-api/v1/definitely-not-a-route", nil)
+		require.Equal(t, http.StatusNotFound, resp.StatusCode)
+		assert.NotEmpty(t, resp.Header.Get("Req-ID"))
+	})
+
+	t.Run("HS-2-004 405 carries Req-ID and Allow", func(t *testing.T) {
+		resp, _ := doRaw(t, http.MethodPost, "/open-api/v1/route-tables", nil)
+		require.Equal(t, http.StatusMethodNotAllowed, resp.StatusCode)
+		assert.NotEmpty(t, resp.Header.Get("Req-ID"))
+		assert.Equal(t, http.MethodGet, resp.Header.Get("Allow"))
+	})
+
+	t.Run("HS-2-005 200 still carries Req-ID", func(t *testing.T) {
+		resp, _ := doRaw(t, http.MethodGet, "/open-api/v1/route-tables", nil)
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+		assert.NotEmpty(t, resp.Header.Get("Req-ID"))
+	})
+
+	t.Run("HS-2-006 plain OPTIONS keeps 405 with CORS", func(t *testing.T) {
+		resp, _ := doRaw(t, http.MethodOptions, "/open-api/v1/route-tables",
+			map[string]string{"Origin": "https://console.example.com"})
+		require.Equal(t, http.StatusMethodNotAllowed, resp.StatusCode)
+		assert.Equal(t, http.MethodGet, resp.Header.Get("Allow"))
+		assert.Equal(t, "*", resp.Header.Get("Access-Control-Allow-Origin"))
+		assert.NotEmpty(t, resp.Header.Get("Req-ID"))
+	})
+
+	t.Run("HS-2-007 Req-ID differs per request", func(t *testing.T) {
+		respA, _ := doRaw(t, http.MethodGet, "/open-api/v1/definitely-not-a-route", nil)
+		respB, _ := doRaw(t, http.MethodGet, "/open-api/v1/definitely-not-a-route", nil)
+		require.NotEmpty(t, respA.Header.Get("Req-ID"))
+		require.NotEmpty(t, respB.Header.Get("Req-ID"))
+		assert.NotEqual(t, respA.Header.Get("Req-ID"), respB.Header.Get("Req-ID"))
+	})
 }

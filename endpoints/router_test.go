@@ -20,9 +20,15 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	log4go "github.com/bfenetworks/go-lib/log/log4go"
+	"github.com/codegangsta/negroni"
 	"github.com/gorilla/mux"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/rainway-ai-gateway/ai-gateway-api/endpoints/middleware"
+	"github.com/rainway-ai-gateway/ai-gateway-api/lib/xreq"
+	"github.com/rainway-ai-gateway/ai-gateway-api/stateful"
 )
 
 // newMethodNotAllowedTestRouter mirrors the production topology: both APIs hang
@@ -97,4 +103,87 @@ func TestAllowedMethodsSkipsRequestMethod(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPut, "/open-api/v1/multi", nil)
 
 	assert.Equal(t, []string{http.MethodGet, http.MethodPost}, allowedMethods(router, req))
+}
+
+// newMiddlewareWiredTestRouter mirrors RegisterRouters for the parts that shape
+// error responses: the 404/405 fallbacks carry the base middleware chain, and
+// matched routes carry the router.Use chain (Recovery mints the request ID).
+func newMiddlewareWiredTestRouter() *mux.Router {
+	router := mux.NewRouter()
+	router.MethodNotAllowedHandler = withBaseMiddlewares(methodNotAllowedHandler(router))
+	router.Use(middleware.MCRecovery)
+
+	jsonNotFound := withBaseMiddlewares(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		xreq.Render(w, r, &xreq.Result{Code: http.StatusNotFound, ErrMsg: "Not Found"})
+	}))
+	router.NotFoundHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		jsonNotFound.ServeHTTP(w, r)
+	})
+
+	router.HandleFunc("/open-api/v1/get-only", func(w http.ResponseWriter, r *http.Request) {
+		xreq.Render(w, r, &xreq.Result{Code: http.StatusOK, Data: map[string]interface{}{"ok": true}})
+	}).Methods(http.MethodGet)
+
+	return router
+}
+
+func TestPreflightAndRouteErrorsCarryHeaders(t *testing.T) {
+	origLogger := stateful.AccessLogger
+	stateful.AccessLogger = log4go.Logger{}
+	t.Cleanup(func() { stateful.AccessLogger = origLogger })
+
+	preflight := func(method string) map[string]string {
+		return map[string]string{
+			"Origin":                        "https://console.example.com",
+			"Access-Control-Request-Method": method,
+		}
+	}
+
+	cases := []struct {
+		name      string
+		method    string
+		path      string
+		headers   map[string]string
+		wantCode  int
+		wantAllow string
+		wantACAO  string
+		wantACAM  string
+		wantReqID bool
+	}{
+		{"preflight on registered route", http.MethodOptions, "/open-api/v1/get-only", preflight("PATCH"),
+			http.StatusNoContent, "", "*", "PATCH", false},
+		{"preflight on unknown path", http.MethodOptions, "/open-api/v1/nope", preflight("GET"),
+			http.StatusNoContent, "", "*", "GET", false},
+		{"json 404 on unknown path", http.MethodGet, "/open-api/v1/nope", nil,
+			http.StatusNotFound, "", "", "", true},
+		{"405 on unsupported method", http.MethodPost, "/open-api/v1/get-only", nil,
+			http.StatusMethodNotAllowed, "GET", "", "", true},
+		{"200 on matched route", http.MethodGet, "/open-api/v1/get-only", nil,
+			http.StatusOK, "", "", "", true},
+		{"plain OPTIONS keeps 405", http.MethodOptions, "/open-api/v1/get-only",
+			map[string]string{"Origin": "https://console.example.com"},
+			http.StatusMethodNotAllowed, "GET", "*", "", true},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(tc.method, tc.path, nil)
+			for k, v := range tc.headers {
+				req.Header.Set(k, v)
+			}
+
+			rec := httptest.NewRecorder()
+			newMiddlewareWiredTestRouter().ServeHTTP(negroni.NewResponseWriter(rec), req)
+
+			assert.Equal(t, tc.wantCode, rec.Code)
+			assert.Equal(t, tc.wantAllow, rec.Header().Get("Allow"))
+			assert.Equal(t, tc.wantACAO, rec.Header().Get("Access-Control-Allow-Origin"))
+			assert.Equal(t, tc.wantACAM, rec.Header().Get("Access-Control-Allow-Methods"))
+			if tc.wantReqID {
+				assert.NotEmpty(t, rec.Header().Get("Req-ID"), "404/405/200 must carry a Req-ID")
+			} else {
+				assert.Empty(t, rec.Header().Get("Req-ID"), "preflight is short-circuited before Render")
+			}
+		})
+	}
 }

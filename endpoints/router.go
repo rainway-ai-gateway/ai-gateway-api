@@ -62,7 +62,7 @@ func RegisterRouters(router *mux.Router) {
 	fs := http.FileServer(root)
 	fh := fileHandler(root, fs)
 
-	router.MethodNotAllowedHandler = methodNotAllowedHandler(router)
+	router.MethodNotAllowedHandler = withBaseMiddlewares(methodNotAllowedHandler(router))
 
 	router.Use(middleware.MCRecovery)
 	router.Use(middleware.MCLogger)
@@ -80,11 +80,18 @@ func RegisterRouters(router *mux.Router) {
 	staticHandler = middleware.MCLogger.Middleware(staticHandler)
 	staticHandler = middleware.MCRecovery.Middleware(staticHandler)
 
+	// API 路径未匹配时返回 JSON 404，避免返回静态文件 HTML。
+	// 该分支同样不在 router.Use 链内（mux v1.8 只对命中的路由套中间件），
+	// 手工套 Recovery→Logger→Cors，保证 CORS 预检与 Req-ID 不丢（issue #298）。
+	// 静态分支已自带全链（含 McIPProbe），不可再包一层，否则双份访问日志。
+	notFoundJSON := withBaseMiddlewares(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		res := &xreq.Result{Code: 404, ErrMsg: "Not Found"}
+		xreq.Render(w, r, res)
+	}))
+
 	router.NotFoundHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// API 路径未匹配时返回 JSON 404，避免返回静态文件 HTML
 		if strings.HasPrefix(r.URL.Path, "/open-api/v1") || strings.HasPrefix(r.URL.Path, "/inner-api/v1") {
-			res := &xreq.Result{Code: 404, ErrMsg: "Not Found"}
-			xreq.Render(w, r, res)
+			notFoundJSON.ServeHTTP(w, r)
 			return
 		}
 
@@ -93,6 +100,25 @@ func RegisterRouters(router *mux.Router) {
 
 	openapi_v1.RegisterEndpoints(router)
 	innerapi_v1.RegisterRouter(router)
+}
+
+// withBaseMiddlewares wraps a handler with the middlewares that are independent
+// of routing and must cover every response: panic recovery (which also mints the
+// request ID), access logging, and CORS (which short-circuits a preflight with
+// 204 + Access-Control-Allow-*).
+//
+// It exists because router.Use only wraps matched routes (mux v1.8): without this
+// the JSON 404 and 405 fallbacks would answer preflight with 405 without any
+// CORS headers and without a Req-ID (issue #298).
+//
+// The management-plane IP allowlist is deliberately NOT part of this chain:
+// route-level 404/405 must stay 404/405 and never turn into 403 (API testing
+// standard §5.5.2 #4). Matched routes still run McIPProbe and stay protected.
+func withBaseMiddlewares(h http.Handler) http.Handler {
+	h = middleware.MCCors.Middleware(h)
+	h = middleware.MCLogger.Middleware(h)
+	h = middleware.MCRecovery.Middleware(h)
+	return h
 }
 
 // methodNotAllowedHandler renders the JSON 405 body and, per RFC 9110 §15.5.6,

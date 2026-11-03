@@ -35,6 +35,25 @@
 - **Data**: 返回的数据结构，调用成功时返回json格式数据，失败时返回null
 - **ErrMsg**: 文本消息，成功时为"success"或空串，失败时为错误信息
 
+**响应头**
+
+| 头 | 出现条件 | 说明 |
+|----|----------|------|
+| `Req-ID` | 所有经统一响应层输出的响应（含路由级 404 / 405） | 请求唯一 ID，与访问日志中的请求 ID 一致，用于排障关联（issue #298） |
+| `Allow` | 405（非 CORS 预检） | 该路径实际支持的方法，逗号 + 空格分隔（issue #297） |
+
+## CORS 与预检
+
+服务开启 CORS（`AllowedOrigins: *`）。跨域调用遵循标准 CORS 预检协议：
+
+| 请求形态 | 响应 |
+|----------|------|
+| 预检：`OPTIONS` + `Origin` + `Access-Control-Request-Method` | `204`，并带 `Access-Control-Allow-Origin`（当前配置下为 `*`）、`Access-Control-Allow-Methods`（回显请求方法）、`Access-Control-Allow-Credentials`、（有请求头时）`Access-Control-Allow-Headers`、`Vary` |
+| 普通 `OPTIONS`（无 `Access-Control-Request-Method`） | `405` + `Allow`（与其它方法一样按「方法不支持」处理） |
+| 实际请求（带 `Origin`） | 正常业务响应 + `Access-Control-Allow-Origin`（当前配置下为 `*`） |
+
+预检与路由级 404/405 均由统一中间件链处理（幂等、含 `Req-ID` 注入与访问日志），不会因路径未注册或方法不支持而丢失 CORS 头。
+
 # Method约定
 
 | Method | 含义 |
