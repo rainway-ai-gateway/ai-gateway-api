@@ -60,34 +60,15 @@ func ListAction(req *http.Request) (interface{}, error) {
 		return nil, err
 	}
 
-	if listReq.Page != nil && *listReq.Page <= 0 {
-		return nil, xerror.WrapParamErrorWithMsg("%s", fmt.Sprintf("page must be > 0, got %d", *listReq.Page))
-	}
-
-	if listReq.PageSize != nil && (*listReq.PageSize <= 0 || *listReq.PageSize > 100) {
-		return nil, xerror.WrapParamErrorWithMsg("%s", fmt.Sprintf("page_size must be between 1 and 100, got %d", *listReq.PageSize))
+	if err := xreq.ValidatePagination(listReq.Page, listReq.PageSize); err != nil {
+		return nil, err
 	}
 
 	if listReq.EntityID != nil && len(*listReq.EntityID) > 64 {
 		return nil, xerror.WrapParamErrorWithMsg("%s", fmt.Sprintf("entity_id must be <= 64 characters, got %d", len(*listReq.EntityID)))
 	}
 
-	var page, pageSize int
-	isPagination := listReq.Page != nil || listReq.PageSize != nil
-	if isPagination {
-		page = 1
-		if listReq.Page != nil && *listReq.Page > 0 {
-			page = *listReq.Page
-		}
-
-		pageSize = 20
-		if listReq.PageSize != nil && *listReq.PageSize > 0 {
-			pageSize = *listReq.PageSize
-		}
-		if pageSize > 100 {
-			pageSize = 100
-		}
-	}
+	page, pageSize := xreq.ResolvePagination(listReq.Page, listReq.PageSize)
 
 	productName := defaultProductName
 
@@ -96,10 +77,8 @@ func ListAction(req *http.Request) (interface{}, error) {
 		Enabled:        listReq.Enabled,
 		EntityID:       listReq.EntityID,
 		UnlimitedQuota: listReq.UnlimitedQuota,
-	}
-	if isPagination {
-		filter.Page = &page
-		filter.PageSize = &pageSize
+		Page:           &page,
+		PageSize:       &pageSize,
 	}
 
 	list, err := container.APIKeyManager.FetchAPIKeyList(req.Context(), filter)
@@ -112,16 +91,16 @@ func ListAction(req *http.Request) (interface{}, error) {
 		return nil, err
 	}
 
-	total := len(list)
-	if isPagination {
-		allList, err := container.APIKeyManager.FetchAPIKeyList(req.Context(), &api_key.APIKeyFilter{
-			ProductName: &productName,
-		})
-		if err != nil {
-			return nil, err
-		}
-		total = len(allList)
+	// total counts the whole filtered collection; reuse the same filters so it
+	// never drifts from list (issue #303).
+	countFilter := *filter
+	countFilter.Page = nil
+	countFilter.PageSize = nil
+	allList, err := container.APIKeyManager.FetchAPIKeyList(req.Context(), &countFilter)
+	if err != nil {
+		return nil, err
 	}
+	total := len(allList)
 
 	if list == nil {
 		list = []*api_key.APIKeyParam{}

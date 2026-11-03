@@ -298,7 +298,7 @@
 | 参数名 | 类型 | 参数含义 | 补充描述 |
 | - | - | - | - |
 | list | []APIKey | API-Key列表 | 元素字段同2.1数据模型，`quota_plan`中包含`balance`字段（含`used`和`remaining`） |
-| pagination | object | 分页信息 | 包含`page`、`page_size`、`total` |
+| pagination | object | 分页信息 | 包含`page`、`page_size`、`total`；未传分页参数时为 `page=1`、`page_size=20`；`total` 为满足 `enabled`/`entity_id`/`unlimited_quota` 过滤条件的总条数 |
 
 ---
 

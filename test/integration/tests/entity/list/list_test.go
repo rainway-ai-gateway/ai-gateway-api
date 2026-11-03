@@ -84,6 +84,51 @@ func TestEntity_List(t *testing.T) {
 		testutil.AssertPagination(t, resp, 1, 1, 2)
 	})
 
+	t.Run("E-2-004 无分页参数时的默认分页与 clamp", func(t *testing.T) {
+		resp, err := testutil.GetClient().Get("/open-api/v1/entities")
+		if err != nil {
+			t.Fatalf("request failed: %v", err)
+		}
+		testutil.AssertSuccess(t, resp)
+		testutil.AssertPagination(t, resp, 1, 20, 2)
+
+		list, err := testutil.GetDataListField(resp, "list")
+		if err != nil {
+			t.Fatalf("parse list: %v", err)
+		}
+		assert.LessOrEqual(t, len(list), 20, "default page_size must truncate the list")
+
+		// clamp 语义：page_size>100 → 100，page<=0 → 1（不返回 422）。
+		resp, err = testutil.GetClient().Get("/open-api/v1/entities", map[string]string{"page_size": "500"})
+		if err != nil {
+			t.Fatalf("request failed: %v", err)
+		}
+		testutil.AssertSuccess(t, resp)
+		testutil.AssertPagination(t, resp, 1, 100, 2)
+
+		resp, err = testutil.GetClient().Get("/open-api/v1/entities", map[string]string{"page": "-1"})
+		if err != nil {
+			t.Fatalf("request failed: %v", err)
+		}
+		testutil.AssertSuccess(t, resp)
+		testutil.AssertPagination(t, resp, 1, 20, 2)
+	})
+
+	t.Run("E-2-005 过滤条件下 total 与过滤一致", func(t *testing.T) {
+		resp, err := testutil.GetClient().Get("/open-api/v1/entities", map[string]string{"name": ent1})
+		if err != nil {
+			t.Fatalf("request failed: %v", err)
+		}
+		testutil.AssertSuccess(t, resp)
+		testutil.AssertPagination(t, resp, 1, 20, 1)
+
+		list, err := testutil.GetDataListField(resp, "list")
+		if err != nil {
+			t.Fatalf("parse list: %v", err)
+		}
+		assert.Len(t, list, 1)
+	})
+
 	t.Cleanup(func() {
 		testutil.DeleteEntity(id1)
 		testutil.DeleteEntityType(typeName)

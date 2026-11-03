@@ -86,10 +86,28 @@
 
 | 参数名 | 类型 | 参数含义 | 必填 | 补充描述 | 合法性条件 |
 | - | - | - | - | - | - |
-| page | int | 页码 | N | 默认1 | 必须 >0，否则使用默认值 1 |
-| page_size | int | 每页条数 | N | 默认20，最大100 | 取值范围 1-100，超出时截断为 100 |
+| page | int | 页码 | N | 默认1 | 见下方「非法值处理」 |
+| page_size | int | 每页条数 | N | 默认20，最大100 | 见下方「非法值处理」 |
 | sort_by | string | 排序字段 | N | - | - |
 | sort_order | string | 排序方向 | N | asc/desc，默认desc | 仅 `asc`/`desc` 有效，其他值被忽略 |
+
+**默认值与截断（通用基线）**
+
+- 未传 `page` / `page_size`：按 `page=1`、`page_size=20` 处理，并**据此分页返回**（不是返回全量）；
+- `page_size > 100`：截断为 100；
+- 响应 `pagination.page` / `pagination.page_size` 为**生效值**（默认值或截断后的值），
+  `pagination.total` 为**满足本次查询过滤条件的总条数**（与分页无关，用于计算总页数）。
+
+**非法值处理（按各接口的 Query 参数表）**
+
+| 类型 | 行为 | 示例接口 |
+|------|------|----------|
+| 严格 | `page <= 0` 或 `page_size < 1` / `> 100` → `422 Param Illegal` | `/api-keys`（`api-keys.md` §2.2） |
+| 截断（clamp） | `page <= 0` 按 1；`page_size < 1` 按 20；`> 100` 按 100 | `/entities`、`/entity-types` |
+
+> **登记例外**：`/providers` 在未传 `page`/`page_size` 时返回**全部匹配记录**，
+> 响应 `pagination.page=1`、`pagination.page_size=total`，且 `page_size` 上限为 1000
+> （见 `providers.md` §2.2）。该例外不再扩大，新增列表接口一律遵循上面的通用基线。
 
 # 公共参数类型
 

@@ -70,6 +70,31 @@ func TestEntityType_List(t *testing.T) {
 		testutil.AssertPagination(t, resp, 1, 1, 2)
 	})
 
+	t.Run("ET-2-003 无分页参数时的默认分页与 clamp", func(t *testing.T) {
+		resp, err := testutil.GetClient().Get("/open-api/v1/entity-types")
+		if err != nil {
+			t.Fatalf("request failed: %v", err)
+		}
+		testutil.AssertSuccess(t, resp)
+		testutil.AssertPagination(t, resp, 1, 20, 2)
+
+		resp, err = testutil.GetClient().Get("/open-api/v1/entity-types", map[string]string{"page_size": "500"})
+		if err != nil {
+			t.Fatalf("request failed: %v", err)
+		}
+		testutil.AssertSuccess(t, resp)
+		testutil.AssertPagination(t, resp, 1, 100, 2)
+	})
+
+	t.Run("ET-2-004 过滤条件下 total 与过滤一致", func(t *testing.T) {
+		resp, err := testutil.GetClient().Get("/open-api/v1/entity-types", map[string]string{"type_name": typeName1})
+		if err != nil {
+			t.Fatalf("request failed: %v", err)
+		}
+		testutil.AssertSuccess(t, resp)
+		testutil.AssertPagination(t, resp, 1, 20, 1)
+	})
+
 	t.Cleanup(func() {
 		testutil.DeleteEntityType(typeName1)
 		testutil.DeleteEntityType(typeName2)
