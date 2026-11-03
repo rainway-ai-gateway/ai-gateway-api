@@ -21,7 +21,7 @@ AI Cache Rules（AI 缓存规则）模块负责 AI 缓存规则集合的管理�
 | 导出 AI 缓存规则配置（InnerAPI） | 6 |
 | **合计** | **27** |
 
-> AC-1-012 为 `//go:build mysql` 并发用例（家族10），需 `AIAPI_MYSQL_DSN`，SQLite 环境不编译。
+> AC-1-012 / AC-1-019 为 `//go:build mysql` 并发用例（家族10），需 `AIAPI_MYSQL_DSN`，SQLite 环境不编译。
 
 ## 4. 认证方式
 
@@ -34,7 +34,8 @@ ai_cache/
 ├── design.md
 ├── update/
 │   ├── update_test.go            # AC-1-001 ~ AC-1-018（PUT）
-│   └── concurrency_mysql_test.go # AC-1-012（//go:build mysql，并发全量替换）
+│   ├── concurrency_mysql_test.go # AC-1-012（//go:build mysql，并发全量替换）
+│   └── replace_conflict_mysql_test.go # AC-1-019（//go:build mysql，409 冲突语义，issue #295）
 └── get/
     └── get_test.go               # AC-2-001 ~ AC-2-003（GET）
 
@@ -106,6 +107,7 @@ innerapi/ai_cache/
 | AC-1-016 | 只读时间戳被忽略 | 合同一致性 | 家族11（#258） | 提交伪造的 2000 年时间戳 → 200，PUT 响应与 GET 回读均无 `created_at`/`updated_at` 键 |
 | AC-1-017 | 集合内 cond 重复 | 异常参数 | 家族3/7（#261） | 同一 PUT 内两条规则仅 name/ttl 不同、`cond` 逐字节相同 → 422（ErrMsg 含 duplicate 与 cond 原文）+ 回读零变更 + 失败审计 before 快照取自库中现状 |
 | AC-1-018 | 唯一 cond 集合幂等编辑 | 正常参数 | 家族1/11（#261） | 2 条 `cond` 互不相同 → 200；GET 回读原样作为 PUT body 再提交 → 200 且逐字段一致、规则元素仍为合同 7 键 |
+| AC-1-019 | 整体替换冲突返回 409（MySQL） | 并发 | 家族10（#295） | 外部会话占住命名锁 → PUT 返回 409 且 `ErrMsg` 不含驱动错误原文；释放后同一请求 200 |
 
 ### 6.4 测试场景详细设计
 
@@ -285,6 +287,10 @@ innerapi/ai_cache/
 **ErrNum**：422；GET 回读零变更；带 V1 增量拉取返回 `Data=null`。
 
 ---
+
+#### 6.4.11.1 AC-1-019：整体替换冲突返回 409（MySQL，家族10，issue #295）
+
+外部会话（`database/sql` 直连测试库）先 `SELECT GET_LOCK('ai_gateway:replace:ai_cache_rules', 0)` 占住集合级命名锁，再 `PUT /open-api/v1/ai-cache-rules`：断言 `ErrNum=409`、`ErrMsg` 以 `Conflict` 开头且不含 `Database Exception`/`Error 1213`/`Deadlock`；释放锁后同一请求返回 200，集合可用。该用例同时钉死「命名锁在真实请求路径生效」，避免 helper 因驱动判定失败退化为 no-op 而无人发现。
 
 #### 6.4.12 AC-1-012：并发全量替换（MySQL，家族10）
 
@@ -567,7 +573,7 @@ PUT 3 条 name 各不相同的规则，GET 返回的 `rules[*].name` 序列严�
 1. 本模块为全局单例集合，无跨资源引用（cond 仅做表达式编译校验，不引用 cluster/provider）。
 2. 规则 name 使用 run-scoped 唯一命名（`<runID>-ac<用例号>` 前缀 + 随机后缀），避免并发/重跑污染。
 3. Inner 导出 product 键名取自测试环境配置 `AIRouteInnerProductName="AI_product"`。
-4. AC-1-012 需 `AIAPI_MYSQL_DSN`（`go test -tags mysql`）；未设置时自动 Skip。
+4. AC-1-012 / AC-1-019 需 `AIAPI_MYSQL_DSN`（`go test -tags mysql`）；未设置时自动 Skip。AC-1-019 会等待 10s 命名锁超时后返回 409。
 
 ## 10. 注意事项
 

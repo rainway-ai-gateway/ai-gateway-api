@@ -70,6 +70,9 @@ func Resolve(err error) *ResolveResult {
 		rr.Type = "Inner Dirty Data"
 	case etDao:
 		rr.Type = "Database Exception"
+		// F-14: never echo driver/SQL/DSN details to clients. The full error and
+		// stack stay available through ResolveResult.FullMsg() for logs.
+		rr.Msg = "database operation failed"
 	case etNullData:
 		rr.Type = "Record Not Exist"
 		rr.ErrNo = 404

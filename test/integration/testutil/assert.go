@@ -17,6 +17,7 @@ package testutil
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -187,6 +188,30 @@ func AssertListFieldLen(t *testing.T, resp *APIResponse, field string, expectedL
 	if len(list) != expectedLen {
 		t.Errorf("expected list field %s length=%d, got %d", field, expectedLen, len(list))
 	}
+}
+
+// MustPatch 发送 PATCH 并断言业务成功，用于测试前置配置。
+// 前置写入只判 err 会静默吞掉校验失败（issue #293），让后续断言以误导性形式失败。
+func MustPatch(t *testing.T, path string, body interface{}) *APIResponse {
+	t.Helper()
+	resp, err := GetClient().Patch(path, body)
+	if err != nil {
+		t.Fatalf("PATCH %s failed: %v", path, err)
+	}
+	AssertSuccess(t, resp)
+	return resp
+}
+
+// LeaksDriverError reports whether an API error message carries database driver
+// details (issue #295 / F-14: 500 responses must not echo SQL, DSN or driver
+// errors).
+func LeaksDriverError(msg string) bool {
+	for _, s := range []string{"Database Exception", "Error 1213", "Error 1205", "Deadlock", "Lock wait timeout"} {
+		if strings.Contains(msg, s) {
+			return true
+		}
+	}
+	return false
 }
 
 // parseData 将 Data 解析为 map

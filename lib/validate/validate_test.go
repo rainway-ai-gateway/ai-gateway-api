@@ -1,6 +1,7 @@
 package validate
 
 import (
+	"math"
 	"strings"
 	"testing"
 	"time"
@@ -272,6 +273,45 @@ func TestQuotaValue(t *testing.T) {
 	// Unknown unit: only non-negative check applies
 	q = 123.45
 	assert.NoError(t, QuotaValue(&q, "unknown"))
+}
+
+func TestQuotaValue_RMBDecimalPlaces(t *testing.T) {
+	// Accepted: values whose decimal representation has at most 8 fractional
+	// digits and stays within the RMB limit. 0.14/0.28/0.55/600.1234 are
+	// regression anchors for issue #293 -- the previous v*1e8 scaling check
+	// rejected them because its 1e-9 tolerance is comparable to the float64 ulp
+	// at these magnitudes.
+	for _, v := range []float64{
+		0, 800, 90000000,
+		0.14, 0.28, 0.55, 600.1234,
+		888.88, 1234.5678, 1000.12345678, 0.00000001,
+	} {
+		q := v
+		assert.NoError(t, QuotaValue(&q, "RMB"), "quota=%v", v)
+	}
+
+	// Rejected: more than 8 fractional digits.
+	for _, v := range []float64{100.123456789, 0.000000001} {
+		q := v
+		assert.Error(t, QuotaValue(&q, "RMB"), "quota=%v", v)
+	}
+
+	// Float-artifact input: reject rather than silently round. The sum must be
+	// computed at run time -- the compiler folds the constant expression 0.1+0.2
+	// to exactly 0.3, whose shortest representation is "0.3".
+	sum := 0.1
+	sum += 0.2
+	assert.Error(t, QuotaValue(&sum, "RMB"), "quota=%v", sum)
+
+	// Over the RMB limit: rejected by the limit check, not the decimal check.
+	q := 90000000.00000001
+	assert.Error(t, QuotaValue(&q, "RMB"))
+
+	// Non-finite values are rejected for both units.
+	nan, inf := math.NaN(), math.Inf(1)
+	assert.Error(t, QuotaValue(&nan, "RMB"))
+	assert.Error(t, QuotaValue(&inf, "RMB"))
+	assert.Error(t, QuotaValue(&inf, "total_token"))
 }
 
 func TestRateLimitPolicy(t *testing.T) {

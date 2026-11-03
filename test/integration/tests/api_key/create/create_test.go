@@ -265,3 +265,80 @@ func TestAPIKey_Create(t *testing.T) {
 		testutil.DeleteEntityType(typeName)
 	})
 }
+
+// TestAPIKey_CreateRMBQuotaDecimals 覆盖 unit=RMB 时 quota 的小数位判定
+// （issue #293）。0.14 / 600.1234 在修复前被 422 拒绝；九位小数与超上限必须拒绝。
+func TestAPIKey_CreateRMBQuotaDecimals(t *testing.T) {
+	post := func(t *testing.T, quota float64) *testutil.APIResponse {
+		t.Helper()
+		resp, err := testutil.GetClient().Post("/open-api/v1/api-keys", map[string]interface{}{
+			"description": "test-key-rmb-decimals",
+			"quota_plan": map[string]interface{}{
+				"unlimited":    false,
+				"quota":        quota,
+				"unit":         "RMB",
+				"reset_period": "monthly",
+			},
+		})
+		if err != nil {
+			t.Fatalf("request failed: %v", err)
+		}
+		return resp
+	}
+
+	for _, tc := range []struct {
+		name  string
+		quota float64
+	}{
+		{"AK-1-013 RMB 配额两位小数", 0.14},
+		{"AK-1-014 RMB 配额四位小数", 600.1234},
+		{"AK-1-015 RMB 配额八位小数", 1000.12345678},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			resp := post(t, tc.quota)
+			testutil.AssertSuccess(t, resp)
+
+			var data map[string]interface{}
+			if err := json.Unmarshal(resp.Data, &data); err != nil {
+				t.Fatalf("unmarshal data: %v", err)
+			}
+			qp, ok := data["quota_plan"].(map[string]interface{})
+			if !assert.True(t, ok, "quota_plan should be an object") {
+				return
+			}
+			assert.Equal(t, "RMB", qp["unit"])
+			assert.InDelta(t, tc.quota, qp["quota"], 1e-8)
+
+			id, _ := data["id"].(string)
+			t.Cleanup(func() { testutil.DeleteAPIKey(id) })
+
+			qpResp, err := testutil.GetClient().Get("/open-api/v1/api-keys/" + id + "/quota-plan")
+			if err != nil {
+				t.Fatalf("query quota-plan failed: %v", err)
+			}
+			testutil.AssertSuccess(t, qpResp)
+			var qpData map[string]interface{}
+			if err := json.Unmarshal(qpResp.Data, &qpData); err != nil {
+				t.Fatalf("unmarshal quota-plan data: %v", err)
+			}
+			balance, ok := qpData["balance"].(map[string]interface{})
+			if !assert.True(t, ok, "balance should be an object") {
+				return
+			}
+			assert.InDelta(t, tc.quota, balance["remaining"], 1e-8)
+			assert.InDelta(t, float64(0), balance["used"], 1e-8)
+		})
+	}
+
+	t.Run("AK-1-016 RMB 配额九位小数", func(t *testing.T) {
+		resp := post(t, 100.123456789)
+		testutil.AssertErrCode(t, resp, 422)
+		assert.Contains(t, resp.ErrMsg, "decimal places")
+	})
+
+	t.Run("AK-1-017 RMB 配额八位小数但超过 9000 万元上限", func(t *testing.T) {
+		resp := post(t, 90000000.00000001)
+		testutil.AssertErrCode(t, resp, 422)
+		assert.Contains(t, resp.ErrMsg, "must be <=")
+	})
+}

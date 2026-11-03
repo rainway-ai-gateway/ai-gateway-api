@@ -117,3 +117,24 @@ func TestDuplicateEntryError(t *testing.T) {
 	assert.True(t, DuplicateEntryError(errors.New("UNIQUE constraint failed")))
 	assert.True(t, DuplicateEntryError(errors.New("duplicate key value violates unique constraint")))
 }
+
+func TestTransientLockError(t *testing.T) {
+	assert.False(t, TransientLockError(nil))
+
+	for _, msg := range []string{
+		"Error 1213 (40001): Deadlock found when trying to get lock; try restarting transaction",
+		"Deadlock found when trying to get lock",
+		"Error 1205 (HY000): Lock wait timeout exceeded; try restarting transaction",
+		"database is locked (5) (SQLITE_BUSY)",
+	} {
+		assert.True(t, TransientLockError(errors.New(msg)), msg)
+	}
+
+	for _, msg := range []string{
+		"Error 1062: Duplicate entry 'x'",
+		"Error 1146: Table 'ai_gateway.t' doesn't exist",
+		"context canceled",
+	} {
+		assert.False(t, TransientLockError(errors.New(msg)), msg)
+	}
+}

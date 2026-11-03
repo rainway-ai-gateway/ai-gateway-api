@@ -82,6 +82,10 @@ func TestAIContextRules_Update_ConcurrentMySQL(t *testing.T) {
 			if resp.ErrNum >= 500 {
 				errs <- fmt.Errorf("worker %d: server error ErrNum=%d %s", w, resp.ErrNum, resp.ErrMsg)
 			}
+			// F-14：失败响应不得携带驱动错误原文（issue #295）。
+			if resp.ErrNum != 200 && testutil.LeaksDriverError(resp.ErrMsg) {
+				errs <- fmt.Errorf("worker %d: ErrMsg leaks driver error: %s", w, resp.ErrMsg)
+			}
 		}(w)
 	}
 	wg.Wait()

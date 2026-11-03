@@ -441,3 +441,87 @@ func TestEntity_CreateAutoID(t *testing.T) {
 		testutil.DeleteEntityType(typeName)
 	})
 }
+
+// TestEntity_CreateRMBQuotaDecimals 覆盖 unit=RMB 时 quota 的小数位判定
+// （issue #293）。0.28 / 600.1234 在修复前被 422 拒绝。
+func TestEntity_CreateRMBQuotaDecimals(t *testing.T) {
+	typeName := testutil.UniqueEntityTypeName()
+	if _, err := testutil.CreateEntityType(typeName, 1); err != nil {
+		t.Fatalf("setup failed: %v", err)
+	}
+	t.Cleanup(func() { testutil.DeleteEntityType(typeName) })
+
+	post := func(t *testing.T, quota float64) *testutil.APIResponse {
+		t.Helper()
+		resp, err := testutil.GetClient().Post("/open-api/v1/entities", map[string]interface{}{
+			"name": testutil.UniqueEntityName(),
+			"type": typeName,
+			"quota_plan": map[string]interface{}{
+				"unlimited":    false,
+				"quota":        quota,
+				"unit":         "RMB",
+				"reset_period": "monthly",
+			},
+		})
+		if err != nil {
+			t.Fatalf("request failed: %v", err)
+		}
+		return resp
+	}
+
+	for _, tc := range []struct {
+		name  string
+		quota float64
+	}{
+		{"E-1-029 Entity RMB 配额两位小数", 0.28},
+		{"E-1-030 Entity RMB 配额四位小数", 600.1234},
+		{"E-1-031 Entity RMB 配额八位小数", 1000.12345678},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			resp := post(t, tc.quota)
+			testutil.AssertSuccess(t, resp)
+
+			var data map[string]interface{}
+			if err := json.Unmarshal(resp.Data, &data); err != nil {
+				t.Fatalf("unmarshal data: %v", err)
+			}
+			qp, ok := data["quota_plan"].(map[string]interface{})
+			if !assert.True(t, ok, "quota_plan should be an object") {
+				return
+			}
+			assert.Equal(t, "RMB", qp["unit"])
+			assert.InDelta(t, tc.quota, qp["quota"], 1e-8)
+
+			id, _ := data["id"].(string)
+			t.Cleanup(func() { testutil.DeleteEntity(id) })
+
+			qpResp, err := testutil.GetClient().Get("/open-api/v1/entities/" + id + "/quota-plan")
+			if err != nil {
+				t.Fatalf("query quota-plan failed: %v", err)
+			}
+			testutil.AssertSuccess(t, qpResp)
+			var qpData map[string]interface{}
+			if err := json.Unmarshal(qpResp.Data, &qpData); err != nil {
+				t.Fatalf("unmarshal quota-plan data: %v", err)
+			}
+			balance, ok := qpData["balance"].(map[string]interface{})
+			if !assert.True(t, ok, "balance should be an object") {
+				return
+			}
+			assert.InDelta(t, tc.quota, balance["remaining"], 1e-8)
+			assert.InDelta(t, float64(0), balance["used"], 1e-8)
+		})
+	}
+
+	t.Run("E-1-032 Entity RMB 配额九位小数", func(t *testing.T) {
+		resp := post(t, 100.123456789)
+		testutil.AssertErrCode(t, resp, 422)
+		assert.Contains(t, resp.ErrMsg, "decimal places")
+	})
+
+	t.Run("E-1-033 Entity RMB 配额八位小数但超过 9000 万元上限", func(t *testing.T) {
+		resp := post(t, 90000000.00000001)
+		testutil.AssertErrCode(t, resp, 422)
+		assert.Contains(t, resp.ErrMsg, "must be <=")
+	})
+}

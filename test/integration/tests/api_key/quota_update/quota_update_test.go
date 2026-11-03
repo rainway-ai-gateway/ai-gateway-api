@@ -47,7 +47,7 @@ func TestAPIKey_QuotaUpdate(t *testing.T) {
 	}
 
 	// 初始化为有限 total_token 配额
-	_, err = testutil.GetClient().Patch("/open-api/v1/api-keys/"+apiKeyID, map[string]interface{}{
+	testutil.MustPatch(t, "/open-api/v1/api-keys/"+apiKeyID, map[string]interface{}{
 		"quota_plan": map[string]interface{}{
 			"unlimited":    false,
 			"quota":        1000,
@@ -55,10 +55,6 @@ func TestAPIKey_QuotaUpdate(t *testing.T) {
 			"reset_period": "monthly",
 		},
 	})
-	if err != nil {
-		t.Fatalf("setup quota failed: %v", err)
-	}
-
 	t.Run("AK-9-001 仅修改 quota（单位不变）后余额正确", func(t *testing.T) {
 		id, err := testutil.CreateAPIKey("quota-update-reset", "")
 		if err != nil {
@@ -66,7 +62,7 @@ func TestAPIKey_QuotaUpdate(t *testing.T) {
 		}
 		defer testutil.DeleteAPIKey(id)
 
-		_, err = testutil.GetClient().Patch("/open-api/v1/api-keys/"+id, map[string]interface{}{
+		testutil.MustPatch(t, "/open-api/v1/api-keys/"+id, map[string]interface{}{
 			"quota_plan": map[string]interface{}{
 				"unlimited":    false,
 				"quota":        1000,
@@ -74,10 +70,6 @@ func TestAPIKey_QuotaUpdate(t *testing.T) {
 				"reset_period": "monthly",
 			},
 		})
-		if err != nil {
-			t.Fatalf("setup quota failed: %v", err)
-		}
-
 		resp, err := testutil.GetClient().Patch("/open-api/v1/api-keys/"+id, map[string]interface{}{
 			"quota_plan": map[string]interface{}{
 				"unlimited": false,
@@ -103,7 +95,7 @@ func TestAPIKey_QuotaUpdate(t *testing.T) {
 		}
 		defer testutil.DeleteAPIKey(id)
 
-		_, err = testutil.GetClient().Patch("/open-api/v1/api-keys/"+id, map[string]interface{}{
+		testutil.MustPatch(t, "/open-api/v1/api-keys/"+id, map[string]interface{}{
 			"quota_plan": map[string]interface{}{
 				"unlimited":    false,
 				"quota":        1000.1234,
@@ -111,10 +103,6 @@ func TestAPIKey_QuotaUpdate(t *testing.T) {
 				"reset_period": "monthly",
 			},
 		})
-		if err != nil {
-			t.Fatalf("setup quota failed: %v", err)
-		}
-
 		resp, err := testutil.GetClient().Patch("/open-api/v1/api-keys/"+id, map[string]interface{}{
 			"quota_plan": map[string]interface{}{
 				"unlimited": false,
@@ -140,7 +128,7 @@ func TestAPIKey_QuotaUpdate(t *testing.T) {
 		}
 		defer testutil.DeleteAPIKey(id)
 
-		_, err = testutil.GetClient().Patch("/open-api/v1/api-keys/"+id, map[string]interface{}{
+		testutil.MustPatch(t, "/open-api/v1/api-keys/"+id, map[string]interface{}{
 			"quota_plan": map[string]interface{}{
 				"unlimited":    false,
 				"quota":        1000,
@@ -148,10 +136,6 @@ func TestAPIKey_QuotaUpdate(t *testing.T) {
 				"reset_period": "monthly",
 			},
 		})
-		if err != nil {
-			t.Fatalf("setup quota failed: %v", err)
-		}
-
 		resp, err := testutil.GetClient().Patch("/open-api/v1/api-keys/"+id, map[string]interface{}{
 			"quota_plan": map[string]interface{}{
 				"unlimited": false,
@@ -176,7 +160,7 @@ func TestAPIKey_QuotaUpdate(t *testing.T) {
 		}
 		defer testutil.DeleteAPIKey(id)
 
-		_, err = testutil.GetClient().Patch("/open-api/v1/api-keys/"+id, map[string]interface{}{
+		testutil.MustPatch(t, "/open-api/v1/api-keys/"+id, map[string]interface{}{
 			"quota_plan": map[string]interface{}{
 				"unlimited":    false,
 				"quota":        1000,
@@ -184,10 +168,6 @@ func TestAPIKey_QuotaUpdate(t *testing.T) {
 				"reset_period": "monthly",
 			},
 		})
-		if err != nil {
-			t.Fatalf("setup quota failed: %v", err)
-		}
-
 		resp, err := testutil.GetClient().Patch("/open-api/v1/api-keys/"+id, map[string]interface{}{
 			"quota_plan": map[string]interface{}{
 				"unlimited": true,
@@ -210,14 +190,11 @@ func TestAPIKey_QuotaUpdate(t *testing.T) {
 		}
 		defer testutil.DeleteAPIKey(id)
 
-		_, err = testutil.GetClient().Patch("/open-api/v1/api-keys/"+id, map[string]interface{}{
+		testutil.MustPatch(t, "/open-api/v1/api-keys/"+id, map[string]interface{}{
 			"quota_plan": map[string]interface{}{
 				"unlimited": true,
 			},
 		})
-		if err != nil {
-			t.Fatalf("setup unlimited failed: %v", err)
-		}
 
 		resp, err := testutil.GetClient().Patch("/open-api/v1/api-keys/"+id, map[string]interface{}{
 			"quota_plan": map[string]interface{}{
@@ -243,7 +220,7 @@ func TestAPIKey_QuotaUpdate(t *testing.T) {
 		}
 		defer testutil.DeleteAPIKey(id)
 
-		_, err = testutil.GetClient().Patch("/open-api/v1/api-keys/"+id, map[string]interface{}{
+		testutil.MustPatch(t, "/open-api/v1/api-keys/"+id, map[string]interface{}{
 			"quota_plan": map[string]interface{}{
 				"unlimited":    false,
 				"quota":        1000,
@@ -251,10 +228,6 @@ func TestAPIKey_QuotaUpdate(t *testing.T) {
 				"reset_period": "monthly",
 			},
 		})
-		if err != nil {
-			t.Fatalf("setup quota failed: %v", err)
-		}
-
 		resp, err := testutil.GetClient().Patch("/open-api/v1/api-keys/"+id, map[string]interface{}{
 			"enabled":     false,
 			"description": "updated-desc",
@@ -276,7 +249,7 @@ func TestAPIKey_QuotaUpdate(t *testing.T) {
 		}
 		defer testutil.DeleteAPIKey(id)
 
-		_, err = testutil.GetClient().Patch("/open-api/v1/api-keys/"+id, map[string]interface{}{
+		testutil.MustPatch(t, "/open-api/v1/api-keys/"+id, map[string]interface{}{
 			"quota_plan": map[string]interface{}{
 				"unlimited":    false,
 				"quota":        1000,
@@ -284,10 +257,6 @@ func TestAPIKey_QuotaUpdate(t *testing.T) {
 				"reset_period": "monthly",
 			},
 		})
-		if err != nil {
-			t.Fatalf("setup quota failed: %v", err)
-		}
-
 		// 构造已使用量：Redis 中剩余 400，即 used = 600
 		apiKeyValue := getAPIKeyValue(t, id)
 		sm.SetQuotaRemaining(apiKeyValue, 400, "total_token")
@@ -316,7 +285,7 @@ func TestAPIKey_QuotaUpdate(t *testing.T) {
 		}
 		defer testutil.DeleteAPIKey(id)
 
-		_, err = testutil.GetClient().Patch("/open-api/v1/api-keys/"+id, map[string]interface{}{
+		testutil.MustPatch(t, "/open-api/v1/api-keys/"+id, map[string]interface{}{
 			"quota_plan": map[string]interface{}{
 				"unlimited":    false,
 				"quota":        1000.1234,
@@ -324,10 +293,6 @@ func TestAPIKey_QuotaUpdate(t *testing.T) {
 				"reset_period": "monthly",
 			},
 		})
-		if err != nil {
-			t.Fatalf("setup quota failed: %v", err)
-		}
-
 		// 构造已使用量：Redis 中剩余 400.0000，即 used = 600.1234
 		apiKeyValue := getAPIKeyValue(t, id)
 		sm.SetQuotaRemaining(apiKeyValue, 400.0000, "RMB")
@@ -356,7 +321,7 @@ func TestAPIKey_QuotaUpdate(t *testing.T) {
 		}
 		defer testutil.DeleteAPIKey(id)
 
-		_, err = testutil.GetClient().Patch("/open-api/v1/api-keys/"+id, map[string]interface{}{
+		testutil.MustPatch(t, "/open-api/v1/api-keys/"+id, map[string]interface{}{
 			"quota_plan": map[string]interface{}{
 				"unlimited":    false,
 				"quota":        1000,
@@ -364,10 +329,6 @@ func TestAPIKey_QuotaUpdate(t *testing.T) {
 				"reset_period": "monthly",
 			},
 		})
-		if err != nil {
-			t.Fatalf("setup quota failed: %v", err)
-		}
-
 		// 构造已使用量：Redis 中剩余 400，即 used = 600
 		apiKeyValue := getAPIKeyValue(t, id)
 		sm.SetQuotaRemaining(apiKeyValue, 400, "total_token")
@@ -401,7 +362,7 @@ func TestAPIKey_QuotaUpdate(t *testing.T) {
 		}
 		defer testutil.DeleteAPIKey(id)
 
-		_, err = testutil.GetClient().Patch("/open-api/v1/api-keys/"+id, map[string]interface{}{
+		testutil.MustPatch(t, "/open-api/v1/api-keys/"+id, map[string]interface{}{
 			"quota_plan": map[string]interface{}{
 				"unlimited":    false,
 				"quota":        1000.1234,
@@ -409,10 +370,6 @@ func TestAPIKey_QuotaUpdate(t *testing.T) {
 				"reset_period": "monthly",
 			},
 		})
-		if err != nil {
-			t.Fatalf("setup quota failed: %v", err)
-		}
-
 		// 构造已使用量：Redis 中剩余 400.0000，即 used = 600.1234
 		apiKeyValue := getAPIKeyValue(t, id)
 		sm.SetQuotaRemaining(apiKeyValue, 400.0000, "RMB")
@@ -443,7 +400,7 @@ func TestAPIKey_QuotaUpdate(t *testing.T) {
 		}
 		defer testutil.DeleteAPIKey(id)
 
-		_, err = testutil.GetClient().Patch("/open-api/v1/api-keys/"+id, map[string]interface{}{
+		testutil.MustPatch(t, "/open-api/v1/api-keys/"+id, map[string]interface{}{
 			"quota_plan": map[string]interface{}{
 				"unlimited":    false,
 				"quota":        1000,
@@ -451,10 +408,6 @@ func TestAPIKey_QuotaUpdate(t *testing.T) {
 				"reset_period": "monthly",
 			},
 		})
-		if err != nil {
-			t.Fatalf("setup quota failed: %v", err)
-		}
-
 		// issue #1476：BFE 全额扣减后余额可为负——模拟欠费 100，
 		// 实际消耗 used = 1000 - (-100) = 1100，允许大于 quota。
 		apiKeyValue := getAPIKeyValue(t, id)
@@ -472,7 +425,7 @@ func TestAPIKey_QuotaUpdate(t *testing.T) {
 		}
 		defer testutil.DeleteAPIKey(id)
 
-		_, err = testutil.GetClient().Patch("/open-api/v1/api-keys/"+id, map[string]interface{}{
+		testutil.MustPatch(t, "/open-api/v1/api-keys/"+id, map[string]interface{}{
 			"quota_plan": map[string]interface{}{
 				"unlimited":    false,
 				"quota":        1000,
@@ -480,10 +433,6 @@ func TestAPIKey_QuotaUpdate(t *testing.T) {
 				"reset_period": "monthly",
 			},
 		})
-		if err != nil {
-			t.Fatalf("setup quota failed: %v", err)
-		}
-
 		// used = 1000 - (-100) = 1100
 		apiKeyValue := getAPIKeyValue(t, id)
 		sm.SetQuotaRemaining(apiKeyValue, -100, "total_token")
@@ -515,7 +464,7 @@ func TestAPIKey_QuotaUpdate(t *testing.T) {
 		}
 		defer testutil.DeleteAPIKey(id)
 
-		_, err = testutil.GetClient().Patch("/open-api/v1/api-keys/"+id, map[string]interface{}{
+		testutil.MustPatch(t, "/open-api/v1/api-keys/"+id, map[string]interface{}{
 			"quota_plan": map[string]interface{}{
 				"unlimited":    false,
 				"quota":        1000,
@@ -523,10 +472,6 @@ func TestAPIKey_QuotaUpdate(t *testing.T) {
 				"reset_period": "monthly",
 			},
 		})
-		if err != nil {
-			t.Fatalf("setup quota failed: %v", err)
-		}
-
 		// used = 1000 - (-100) = 1100
 		apiKeyValue := getAPIKeyValue(t, id)
 		sm.SetQuotaRemaining(apiKeyValue, -100, "total_token")

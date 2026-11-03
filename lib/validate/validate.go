@@ -19,6 +19,7 @@ import (
 	"math"
 	"net"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -439,6 +440,9 @@ func QuotaValue(quota *float64, unit string) error {
 	if quota == nil {
 		return nil
 	}
+	if math.IsNaN(*quota) || math.IsInf(*quota, 0) {
+		return xerror.WrapParamErrorWithMsg("quota must be a finite number")
+	}
 	if *quota < 0 {
 		return xerror.WrapParamErrorWithMsg("quota must be >= 0")
 	}
@@ -458,9 +462,19 @@ func QuotaValue(quota *float64, unit string) error {
 }
 
 func validDecimalPlaces(v float64, maxPlaces int) bool {
-	mult := math.Pow(10, float64(maxPlaces))
-	scaled := v * mult
-	return math.Abs(scaled-math.Round(scaled)) < 1e-9
+	if math.IsNaN(v) || math.IsInf(v, 0) {
+		return false
+	}
+	// Count the fractional digits of the shortest decimal representation that
+	// round-trips to v. Scaling by 10^maxPlaces instead would compare a rounding
+	// error of up to half an ulp against the 1e-9 threshold, which rejects valid
+	// values at the magnitudes RMB quotas use (issue #293: 0.14, 600.1234).
+	repr := strconv.FormatFloat(v, 'f', -1, 64)
+	dot := strings.IndexByte(repr, '.')
+	if dot < 0 {
+		return true
+	}
+	return len(repr)-dot-1 <= maxPlaces
 }
 
 // RateLimitPolicy validates a rate limit policy configuration.

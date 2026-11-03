@@ -41,7 +41,7 @@ func TestAPIKey_QuotaReset(t *testing.T) {
 	if err != nil {
 		t.Fatalf("setup failed: %v", err)
 	}
-	_, err = testutil.GetClient().Patch("/open-api/v1/api-keys/"+apiKeyID, map[string]interface{}{
+	testutil.MustPatch(t, "/open-api/v1/api-keys/"+apiKeyID, map[string]interface{}{
 		"quota_plan": map[string]interface{}{
 			"unlimited":    false,
 			"quota":        1000000,
@@ -49,9 +49,6 @@ func TestAPIKey_QuotaReset(t *testing.T) {
 			"reset_period": "monthly",
 		},
 	})
-	if err != nil {
-		t.Fatalf("setup failed: %v", err)
-	}
 
 	t.Run("AK-8-001 重置配额余额", func(t *testing.T) {
 		resp, err := testutil.GetClient().Post("/open-api/v1/api-keys/"+apiKeyID+"/quota-plan/reset", map[string]interface{}{
@@ -83,7 +80,7 @@ func TestAPIKey_QuotaReset(t *testing.T) {
 		}
 		defer testutil.DeleteAPIKey(rmbID)
 
-		_, err = testutil.GetClient().Patch("/open-api/v1/api-keys/"+rmbID, map[string]interface{}{
+		testutil.MustPatch(t, "/open-api/v1/api-keys/"+rmbID, map[string]interface{}{
 			"quota_plan": map[string]interface{}{
 				"unlimited":    false,
 				"quota":        100.5,
@@ -91,10 +88,6 @@ func TestAPIKey_QuotaReset(t *testing.T) {
 				"reset_period": "monthly",
 			},
 		})
-		if err != nil {
-			t.Fatalf("setup quota failed: %v", err)
-		}
-
 		resp, err := testutil.GetClient().Post("/open-api/v1/api-keys/"+rmbID+"/quota-plan/reset", map[string]interface{}{
 			"quota":  200.8888,
 			"reason": "adjust rmb quota",
@@ -122,7 +115,7 @@ func TestAPIKey_QuotaReset(t *testing.T) {
 		}
 		defer testutil.DeleteAPIKey(rmbID)
 
-		_, err = testutil.GetClient().Patch("/open-api/v1/api-keys/"+rmbID, map[string]interface{}{
+		testutil.MustPatch(t, "/open-api/v1/api-keys/"+rmbID, map[string]interface{}{
 			"quota_plan": map[string]interface{}{
 				"unlimited":    false,
 				"quota":        100.5,
@@ -130,13 +123,72 @@ func TestAPIKey_QuotaReset(t *testing.T) {
 				"reset_period": "monthly",
 			},
 		})
-		if err != nil {
-			t.Fatalf("setup quota failed: %v", err)
-		}
-
 		resp, err := testutil.GetClient().Post("/open-api/v1/api-keys/"+rmbID+"/quota-plan/reset", map[string]interface{}{
 			"quota":  90000000.01,
 			"reason": "exceed rmb quota limit",
+		})
+		if err != nil {
+			t.Fatalf("request failed: %v", err)
+		}
+		testutil.AssertErrCode(t, resp, 422)
+	})
+
+	t.Run("AK-8-005 重置 RMB 配额八位小数", func(t *testing.T) {
+		rmbID, err := testutil.CreateAPIKey("rmb-reset-8dp-key", "")
+		if err != nil {
+			t.Fatalf("setup failed: %v", err)
+		}
+		defer testutil.DeleteAPIKey(rmbID)
+
+		// 前置配额 0.14 元：修复前该值本身即被 422 拒绝（issue #293）。
+		testutil.MustPatch(t, "/open-api/v1/api-keys/"+rmbID, map[string]interface{}{
+			"quota_plan": map[string]interface{}{
+				"unlimited":    false,
+				"quota":        0.14,
+				"unit":         "RMB",
+				"reset_period": "monthly",
+			},
+		})
+
+		resp, err := testutil.GetClient().Post("/open-api/v1/api-keys/"+rmbID+"/quota-plan/reset", map[string]interface{}{
+			"quota":  1000.12345678,
+			"reason": "8-decimal rmb quota",
+		})
+		if err != nil {
+			t.Fatalf("request failed: %v", err)
+		}
+		testutil.AssertSuccess(t, resp)
+
+		var data map[string]interface{}
+		if err := json.Unmarshal(resp.Data, &data); err != nil {
+			t.Fatalf("unmarshal data: %v", err)
+		}
+		assert.InDelta(t, float64(0.14), data["previous_quota"], 1e-8)
+		assert.InDelta(t, 1000.12345678, data["new_quota"], 1e-8)
+		balance := data["balance"].(map[string]interface{})
+		assert.InDelta(t, float64(0), balance["used"], 1e-8)
+		assert.InDelta(t, 1000.12345678, balance["new_remaining"], 1e-8)
+	})
+
+	t.Run("AK-8-006 重置 RMB 配额九位小数", func(t *testing.T) {
+		rmbID, err := testutil.CreateAPIKey("rmb-reset-9dp-key", "")
+		if err != nil {
+			t.Fatalf("setup failed: %v", err)
+		}
+		defer testutil.DeleteAPIKey(rmbID)
+
+		testutil.MustPatch(t, "/open-api/v1/api-keys/"+rmbID, map[string]interface{}{
+			"quota_plan": map[string]interface{}{
+				"unlimited":    false,
+				"quota":        200.8888,
+				"unit":         "RMB",
+				"reset_period": "monthly",
+			},
+		})
+
+		resp, err := testutil.GetClient().Post("/open-api/v1/api-keys/"+rmbID+"/quota-plan/reset", map[string]interface{}{
+			"quota":  100.123456789,
+			"reason": "9-decimal rmb quota",
 		})
 		if err != nil {
 			t.Fatalf("request failed: %v", err)

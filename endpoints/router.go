@@ -62,10 +62,7 @@ func RegisterRouters(router *mux.Router) {
 	fs := http.FileServer(root)
 	fh := fileHandler(root, fs)
 
-	router.MethodNotAllowedHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		res := &xreq.Result{Code: 405, ErrMsg: "Method Not Allowed"}
-		xreq.Render(w, r, res)
-	})
+	router.MethodNotAllowedHandler = withBaseMiddlewares(methodNotAllowedHandler(router))
 
 	router.Use(middleware.MCRecovery)
 	router.Use(middleware.MCLogger)
@@ -83,11 +80,18 @@ func RegisterRouters(router *mux.Router) {
 	staticHandler = middleware.MCLogger.Middleware(staticHandler)
 	staticHandler = middleware.MCRecovery.Middleware(staticHandler)
 
+	// API 路径未匹配时返回 JSON 404，避免返回静态文件 HTML。
+	// 该分支同样不在 router.Use 链内（mux v1.8 只对命中的路由套中间件），
+	// 手工套 Recovery→Logger→Cors，保证 CORS 预检与 Req-ID 不丢（issue #298）。
+	// 静态分支已自带全链（含 McIPProbe），不可再包一层，否则双份访问日志。
+	notFoundJSON := withBaseMiddlewares(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		res := &xreq.Result{Code: 404, ErrMsg: "Not Found"}
+		xreq.Render(w, r, res)
+	}))
+
 	router.NotFoundHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// API 路径未匹配时返回 JSON 404，避免返回静态文件 HTML
 		if strings.HasPrefix(r.URL.Path, "/open-api/v1") || strings.HasPrefix(r.URL.Path, "/inner-api/v1") {
-			res := &xreq.Result{Code: 404, ErrMsg: "Not Found"}
-			xreq.Render(w, r, res)
+			notFoundJSON.ServeHTTP(w, r)
 			return
 		}
 
@@ -96,4 +100,72 @@ func RegisterRouters(router *mux.Router) {
 
 	openapi_v1.RegisterEndpoints(router)
 	innerapi_v1.RegisterRouter(router)
+}
+
+// withBaseMiddlewares wraps a handler with the middlewares that are independent
+// of routing and must cover every response: panic recovery (which also mints the
+// request ID), access logging, and CORS (which short-circuits a preflight with
+// 204 + Access-Control-Allow-*).
+//
+// It exists because router.Use only wraps matched routes (mux v1.8): without this
+// the JSON 404 and 405 fallbacks would answer preflight with 405 without any
+// CORS headers and without a Req-ID (issue #298).
+//
+// The management-plane IP allowlist is deliberately NOT part of this chain:
+// route-level 404/405 must stay 404/405 and never turn into 403 (API testing
+// standard §5.5.2 #4). Matched routes still run McIPProbe and stay protected.
+func withBaseMiddlewares(h http.Handler) http.Handler {
+	h = middleware.MCCors.Middleware(h)
+	h = middleware.MCLogger.Middleware(h)
+	h = middleware.MCRecovery.Middleware(h)
+	return h
+}
+
+// methodNotAllowedHandler renders the JSON 405 body and, per RFC 9110 §15.5.6,
+// advertises the methods the matched path actually supports.
+func methodNotAllowedHandler(router *mux.Router) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if allow := allowedMethods(router, r); len(allow) > 0 {
+			w.Header().Set("Allow", strings.Join(allow, ", "))
+		}
+
+		res := &xreq.Result{Code: 405, ErrMsg: "Method Not Allowed"}
+		xreq.Render(w, r, res)
+	})
+}
+
+// allowProbeMethods is the set of methods probed when computing the Allow
+// header. Keep it in sync with the method convention in
+// design-docs/api-define/OpenAPI接口定义/00-common.md.
+var allowProbeMethods = []string{
+	http.MethodGet, http.MethodHead, http.MethodOptions,
+	http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete,
+}
+
+// allowedMethods returns the methods that route to r's path, in a stable order.
+// It probes the same router so sub-routers, path variables and other matchers
+// are honoured: Router.Match only exposes the route that failed the method
+// matcher, and iterating router.routes cannot see through
+// PathPrefix(...).Subrouter().
+func allowedMethods(router *mux.Router, r *http.Request) []string {
+	var allowed []string
+
+	for _, method := range allowProbeMethods {
+		if method == r.Method {
+			continue
+		}
+
+		probe := r.Clone(r.Context())
+		probe.Method = method
+
+		var match mux.RouteMatch
+		// Router.Match also reports true (with MatchErr set) for a method
+		// mismatch or a not-found path once the custom handlers are installed,
+		// so a clean match on a concrete route is required.
+		if router.Match(probe, &match) && match.MatchErr == nil && match.Route != nil {
+			allowed = append(allowed, method)
+		}
+	}
+
+	return allowed
 }
