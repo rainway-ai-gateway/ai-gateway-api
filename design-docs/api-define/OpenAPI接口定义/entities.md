@@ -256,7 +256,7 @@
 | pagination | object | 分页信息 | - |
 | pagination.page | int | 当前页码 | - |
 | pagination.page_size | int | 每页条数 | - |
-| pagination.total | int | 总条数 | - |
+| pagination.total | int | 总条数 | 满足本次查询过滤条件的总条数（与分页无关） |
 
 **list 对象字段说明**
 

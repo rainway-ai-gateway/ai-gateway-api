@@ -45,44 +45,25 @@ func EntityTypeListAction(req *http.Request) (interface{}, error) {
 		return nil, err
 	}
 
-	var page, pageSize int
-	isPagination := filter.Page != nil || filter.PageSize != nil
-	if isPagination {
-		page = 1
-		if filter.Page != nil && *filter.Page > 0 {
-			page = *filter.Page
-		}
-
-		pageSize = 20
-		if filter.PageSize != nil && *filter.PageSize > 0 {
-			pageSize = *filter.PageSize
-		}
-		if pageSize > 100 {
-			pageSize = 100
-		}
-
-		filter.Page = &page
-		filter.PageSize = &pageSize
-	}
+	page, pageSize := xreq.ResolvePagination(filter.Page, filter.PageSize)
+	filter.Page = &page
+	filter.PageSize = &pageSize
 
 	list, err := container.EntityTypeManager.FetchEntityTypeList(req.Context(), filter)
 	if err != nil {
 		return nil, err
 	}
 
-	total := len(list)
-	if isPagination {
-		countFilter := &entity.EntityTypeFilter{
-			ID:       filter.ID,
-			TypeName: filter.TypeName,
-			Level:    filter.Level,
-		}
-		allList, err := container.EntityTypeManager.FetchEntityTypeList(req.Context(), countFilter)
-		if err != nil {
-			return nil, err
-		}
-		total = len(allList)
+	// total counts the whole filtered collection; reuse the same filters so it
+	// never drifts from list (issue #303).
+	countFilter := *filter
+	countFilter.Page = nil
+	countFilter.PageSize = nil
+	allList, err := container.EntityTypeManager.FetchEntityTypeList(req.Context(), &countFilter)
+	if err != nil {
+		return nil, err
 	}
+	total := len(allList)
 
 	resp := &EntityTypeListResponse{
 		List: list,

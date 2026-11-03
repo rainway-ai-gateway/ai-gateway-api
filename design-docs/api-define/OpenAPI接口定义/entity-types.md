@@ -92,7 +92,7 @@
 | 参数名 | 类型 | 参数含义 | 补充描述 |
 | - | - | - | - |
 | list | []EntityType | Entity-Type列表 | 元素字段同3.2.1创建Entity-Type返回数据 |
-| pagination | object | 分页信息 | 包含`page`、`page_size`、`total` |
+| pagination | object | 分页信息 | 包含`page`、`page_size`、`total`；未传分页参数时为 `page=1`、`page_size=20`；`total` 为满足 `id`/`type_name`/`level` 过滤条件的总条数 |
 
 ---
 
