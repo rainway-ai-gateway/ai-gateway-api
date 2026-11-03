@@ -50,11 +50,23 @@ func TestTrafficMirrorRules_Update_ConcurrentMySQL(t *testing.T) {
 	client := &testutil.Client{BaseURL: sm.ServerURL, HTTPClient: &http.Client{Timeout: 60 * time.Second}}
 
 	// mirror_cluster 存在性校验需要真实 cluster：在 MySQL 后端服务上创建。
+	// provider 必须带齐契约字段并断言业务码——裸 POST 会静默吞掉 422，
+	// 让后续 cluster 创建失败伪装成并发缺陷（issue #295 setup 缺陷）。
+	// 注意用本用例的 client（MySQL 服务实例），不能用 testutil 全局 client。
 	providerName := testutil.UniqueProviderName()
-	_, err = client.Post("/open-api/v1/providers", map[string]interface{}{
+	providerResp, err := client.Post("/open-api/v1/providers", map[string]interface{}{
 		"name": providerName,
+		"instance_pool": []interface{}{
+			map[string]interface{}{"addr": "10.0.0.1", "weight": 100, "port": 8080},
+		},
+		"model_protocols": []string{"openai"},
+		"models":          []string{"deepseek-chat"},
+		"keys": []interface{}{
+			map[string]interface{}{"name": "key-primary", "key": "sk-aaaaaaaaaaaa"},
+		},
 	})
 	require.NoError(t, err)
+	require.Equal(t, 200, providerResp.ErrNum, providerResp.ErrMsg)
 	clusterName := testutil.UniqueClusterName()
 	resp, err := client.Post("/open-api/v1/clusters", map[string]interface{}{
 		"name": clusterName,
@@ -92,6 +104,10 @@ func TestTrafficMirrorRules_Update_ConcurrentMySQL(t *testing.T) {
 			}
 			if resp.ErrNum != 200 {
 				errCh <- fmt.Errorf("worker %d: PUT failed: %d %s", w, resp.ErrNum, resp.ErrMsg)
+				// F-14：失败响应不得携带驱动错误原文（issue #295）。
+				if testutil.LeaksDriverError(resp.ErrMsg) {
+					errCh <- fmt.Errorf("worker %d: ErrMsg leaks driver error: %s", w, resp.ErrMsg)
+				}
 			}
 		}(w)
 	}

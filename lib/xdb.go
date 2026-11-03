@@ -164,3 +164,27 @@ func DuplicateEntryError(err error) bool {
 		strings.Contains(msg, "UNIQUE constraint failed") ||
 		strings.Contains(msg, "duplicate key value violates unique constraint")
 }
+
+// TransientLockError reports whether err is a retryable lock conflict:
+// MySQL 1213 deadlock, MySQL 1205 lock wait timeout, or a SQLite busy error.
+// Whole-collection replacements are idempotent, so their transactions can be
+// replayed safely (issue #295).
+func TransientLockError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	for _, s := range []string{
+		"Error 1213",
+		"Deadlock found",
+		"Error 1205",
+		"Lock wait timeout exceeded",
+		"database is locked",
+		"database table is locked",
+	} {
+		if strings.Contains(msg, s) {
+			return true
+		}
+	}
+	return false
+}

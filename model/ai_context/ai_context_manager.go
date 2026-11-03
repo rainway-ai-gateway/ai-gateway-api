@@ -123,7 +123,7 @@ func (m *AIContextManager) SetRules(ctx context.Context, param *shared.AIContext
 		replaceRules = append(replaceRules, contextRuleRowFromShared(rule))
 	}
 
-	err := m.txn.AtomExecute(ctx, func(ctx context.Context) error {
+	err := itxn.ExecuteWithRetry(ctx, m.txn, func(ctx context.Context) error {
 		return m.storager.ReplaceAll(ctx, replaceRules)
 	})
 	if err != nil {

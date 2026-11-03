@@ -17,6 +17,7 @@ package testutil
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -199,6 +200,18 @@ func MustPatch(t *testing.T, path string, body interface{}) *APIResponse {
 	}
 	AssertSuccess(t, resp)
 	return resp
+}
+
+// LeaksDriverError reports whether an API error message carries database driver
+// details (issue #295 / F-14: 500 responses must not echo SQL, DSN or driver
+// errors).
+func LeaksDriverError(msg string) bool {
+	for _, s := range []string{"Database Exception", "Error 1213", "Error 1205", "Deadlock", "Lock wait timeout"} {
+		if strings.Contains(msg, s) {
+			return true
+		}
+	}
+	return false
 }
 
 // parseData 将 Data 解析为 map

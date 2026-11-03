@@ -132,7 +132,7 @@ func (m *TrafficMirrorManager) SetTrafficMirrorRules(ctx context.Context, param 
 		replaceRules = append(replaceRules, trafficMirrorRuleParamFromShared(rule))
 	}
 
-	err := m.txn.AtomExecute(ctx, func(ctx context.Context) error {
+	err := itxn.ExecuteWithRetry(ctx, m.txn, func(ctx context.Context) error {
 		return m.storager.ReplaceAll(ctx, replaceRules)
 	})
 	if err != nil {
