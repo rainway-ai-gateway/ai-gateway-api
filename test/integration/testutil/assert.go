@@ -189,6 +189,18 @@ func AssertListFieldLen(t *testing.T, resp *APIResponse, field string, expectedL
 	}
 }
 
+// MustPatch 发送 PATCH 并断言业务成功，用于测试前置配置。
+// 前置写入只判 err 会静默吞掉校验失败（issue #293），让后续断言以误导性形式失败。
+func MustPatch(t *testing.T, path string, body interface{}) *APIResponse {
+	t.Helper()
+	resp, err := GetClient().Patch(path, body)
+	if err != nil {
+		t.Fatalf("PATCH %s failed: %v", path, err)
+	}
+	AssertSuccess(t, resp)
+	return resp
+}
+
 // parseData 将 Data 解析为 map
 func parseData(resp *APIResponse) (map[string]interface{}, error) {
 	if resp == nil {
