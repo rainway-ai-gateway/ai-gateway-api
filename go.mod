@@ -31,6 +31,7 @@ require (
 	filippo.io/edwards25519 v1.1.0 // indirect
 	github.com/ClickHouse/ch-go v0.67.0 // indirect
 	github.com/andybalholm/brotli v1.2.0 // indirect
+	github.com/expr-lang/expr v1.17.8 // indirect
 	github.com/go-faster/city v1.0.1 // indirect
 	github.com/go-faster/errors v0.7.1 // indirect
 	github.com/klauspost/compress v1.18.0 // indirect
@@ -67,7 +68,6 @@ require (
 	github.com/tidwall/match v1.1.1 // indirect
 	github.com/tidwall/pretty v1.2.0 // indirect
 	github.com/tidwall/sjson v1.2.5 // indirect
-	github.com/tjfoc/gmsm v1.3.2 // indirect
 	github.com/zmap/go-iptree v0.0.0-20170831022036-1948b1097e25 // indirect
 	golang.org/x/crypto v0.45.0
 	golang.org/x/sys v0.38.0 // indirect
@@ -81,3 +81,9 @@ require (
 )
 
 // 本地联调时可临时切换：replace github.com/bfenetworks/bfe => ../bfe
+
+// TODO(dep-bump): 临时依赖，勿随功能分支合入主线。
+// 指向本地 bfe 工作分支（含 AIConf.EnsureReasoningContent，且已下线 bfe_tls）。
+// 上游发布含该字段的版本后：删除本行，并把 require 的 bfe 版本 bump 到该版本
+// （届时 go mod tidy 会自动补 expr-lang/expr、移除 tjfoc/gmsm）。
+replace github.com/bfenetworks/bfe => ../bfe

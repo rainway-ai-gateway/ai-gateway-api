@@ -1143,3 +1143,29 @@ func TestTrafficMirrorRules(t *testing.T) {
 	rule.PathRewrite = nil
 	assert.NoError(t, TrafficMirrorRules(&shared.TrafficMirrorRulesParam{Rules: []*shared.TrafficMirrorRuleParam{rule}}))
 }
+
+// TestLLMConfigEnsureReasoningContent covers the value-domain check for
+// llm_config.ensure_reasoning_content: only protocols with an injection
+// implementation are accepted, and entries must be non-empty and unique.
+func TestLLMConfigEnsureReasoningContent(t *testing.T) {
+	base := func(protocols []string) *icluster_conf.LLMConfig {
+		return &icluster_conf.LLMConfig{
+			Provider:               lib.PString("deepseek"),
+			Models:                 []string{"deepseek-chat"},
+			EnsureReasoningContent: protocols,
+		}
+	}
+
+	assert.NoError(t, LLMConfig(base(nil)))
+	assert.NoError(t, LLMConfig(base([]string{})))
+	assert.NoError(t, LLMConfig(base([]string{"openai"})))
+	assert.NoError(t, LLMConfig(base([]string{"openai", "anthropic"})))
+
+	// gemini has no reasoning_content injection point: rejected instead of
+	// silently doing nothing
+	assert.Error(t, LLMConfig(base([]string{"gemini"})))
+	assert.Error(t, LLMConfig(base([]string{"foo"})))
+	// empty and duplicate entries
+	assert.Error(t, LLMConfig(base([]string{""})))
+	assert.Error(t, LLMConfig(base([]string{"openai", "openai"})))
+}

@@ -265,6 +265,7 @@ func (m *ProviderManager) UpdateProvider(ctx context.Context, name string,
 		origInstancePool := param.InstancePool
 		origKeys := param.Keys
 		origModels := param.Models
+		origProtocols := param.ModelProtocols
 
 		if err := m.storager.UpdateProvider(ctx, name, param); err != nil {
 			return err
@@ -278,6 +279,12 @@ func (m *ProviderManager) UpdateProvider(ctx context.Context, name string,
 			clusterConfigChanged = true
 		}
 		if origModels != nil && !providerModelsEqual(existing.Models, origModels) {
+			clusterConfigChanged = true
+		}
+		if origProtocols != nil && !providerProtocolsEqual(existing.ModelProtocols, origProtocols) {
+			// A protocol narrowing can invalidate a referencing cluster's
+			// ensure_reasoning_content (bfe AIConfCheck requires every entry to
+			// be declared by ModelProtocols).
 			clusterConfigChanged = true
 		}
 		if origInstanceSource != nil && *origInstanceSource != existing.InstanceSource {
@@ -1064,6 +1071,18 @@ func providerKeysEqual(a, b []ProviderKey) bool {
 
 // providerModelsEqual reports whether two provider model lists are identical.
 // Order matters because models are replaced as an ordered array.
+func providerProtocolsEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
 func providerModelsEqual(a, b []string) bool {
 	if len(a) != len(b) {
 		return false

@@ -1040,3 +1040,180 @@ func TestClusters_Create_PriceMissAction(t *testing.T) {
 		}
 	})
 }
+
+// TestClusters_Create_EnsureReasoningContent 覆盖 llm_config.ensure_reasoning_content
+// 的创建链路：回读一致、缺省语义、值域校验、provider 协议交叉校验，以及
+// 每个 4xx 用例的"不落库 + 不出现在 InnerAPI 导出产物"防泄漏断言。
+// 合同依据：design-docs/api-define/OpenAPI接口定义/clusters.md（llm_config 表）
+// 与 InnerAPI接口定义/server-data-conf.md（AIConf.EnsureReasoningContent 行）。
+func TestClusters_Create_EnsureReasoningContent(t *testing.T) {
+	dualProvider := testutil.UniqueProviderName()
+	if _, err := testutil.CreateProvider(dualProvider, map[string]interface{}{
+		"models":          []string{"deepseek-chat"},
+		"model_protocols": []string{"openai", "anthropic"},
+	}); err != nil {
+		t.Fatalf("setup dual-protocol provider failed: %v", err)
+	}
+	defer testutil.DeleteProvider(dualProvider)
+
+	openaiProvider := testutil.UniqueProviderName()
+	if _, err := testutil.CreateProvider(openaiProvider, map[string]interface{}{
+		"models":          []string{"deepseek-chat"},
+		"model_protocols": []string{"openai"},
+	}); err != nil {
+		t.Fatalf("setup openai-only provider failed: %v", err)
+	}
+	defer testutil.DeleteProvider(openaiProvider)
+
+	bodyWithEnsure := func(name, provider string, ensure interface{}) map[string]interface{} {
+		llm := map[string]interface{}{
+			"models":   []string{"deepseek-chat"},
+			"provider": provider,
+		}
+		if ensure != nil {
+			llm["ensure_reasoning_content"] = ensure
+		}
+		return map[string]interface{}{"name": name, "llm_config": llm}
+	}
+
+	readBackEnsure := func(t *testing.T, cluster string) (interface{}, bool) {
+		t.Helper()
+		resp, err := testutil.GetClient().Get("/open-api/v1/clusters/" + cluster)
+		if err != nil {
+			t.Fatalf("get cluster failed: %v", err)
+		}
+		testutil.AssertSuccess(t, resp)
+		var data map[string]interface{}
+		json.Unmarshal(resp.Data, &data)
+		llm, _ := data["llm_config"].(map[string]interface{})
+		v, ok := llm["ensure_reasoning_content"]
+		return v, ok
+	}
+
+	// exportedEnsure 返回导出中该 cluster 的 AIConf.EnsureReasoningContent。
+	// 导出结构体不带 omitempty，未配置时为 null（与 NormalizeUpstreamError 一致），
+	// bfe 反序列化为 nil 即关闭。
+	exportedEnsure := func(t *testing.T, cluster string) (interface{}, bool, bool) {
+		t.Helper()
+		resp, err := testutil.GetClient().Get("/inner-api/v1/configs/tls_conf/server_data_conf")
+		if err != nil {
+			t.Fatalf("export request failed: %v", err)
+		}
+		testutil.AssertSuccess(t, resp)
+		var data map[string]interface{}
+		json.Unmarshal(resp.Data, &data)
+		clusterConf, _ := data["ClusterConf"].(map[string]interface{})
+		config, _ := clusterConf["Config"].(map[string]interface{})
+		entry, inExport := config[cluster].(map[string]interface{})
+		if !inExport {
+			return nil, false, false
+		}
+		aiConf, _ := entry["AIConf"].(map[string]interface{})
+		v, ok := aiConf["EnsureReasoningContent"]
+		return v, ok, true
+	}
+
+	t.Run("CL-1-201 创建时带 openai 并回读一致", func(t *testing.T) {
+		name := testutil.UniqueClusterName()
+		defer testutil.DeleteCluster(name)
+		resp, err := testutil.GetClient().Post("/open-api/v1/clusters", bodyWithEnsure(name, dualProvider, []string{"openai"}))
+		if err != nil || resp.ErrNum != 200 {
+			t.Fatalf("create failed: err=%v ErrNum=%d ErrMsg=%s", err, resp.ErrNum, resp.ErrMsg)
+		}
+		v, ok := readBackEnsure(t, name)
+		if !assert.True(t, ok, "ensure_reasoning_content must be returned") {
+			return
+		}
+		assert.Equal(t, []interface{}{"openai"}, v)
+	})
+
+	t.Run("CL-1-202 缺省不配置：回读与导出均为 null", func(t *testing.T) {
+		name := testutil.UniqueClusterName()
+		defer testutil.DeleteCluster(name)
+		resp, err := testutil.GetClient().Post("/open-api/v1/clusters", bodyWithEnsure(name, dualProvider, nil))
+		if err != nil || resp.ErrNum != 200 {
+			t.Fatalf("create failed: err=%v ErrNum=%d ErrMsg=%s", err, resp.ErrNum, resp.ErrMsg)
+		}
+		// llm_config 的既有约定：未配置的对象/数组字段回读为 null（不加 omitempty）
+		if v, ok := readBackEnsure(t, name); ok && v != nil {
+			t.Fatalf("ensure_reasoning_content must be null when unset, got %v", v)
+		}
+		v, ok, inExport := exportedEnsure(t, name)
+		if !assert.True(t, inExport, "cluster must appear in the export") {
+			return
+		}
+		if ok && v != nil {
+			t.Fatalf("exported EnsureReasoningContent must be null when unset, got %v", v)
+		}
+	})
+
+	t.Run("CL-1-203 双协议组合：回读与导出一致", func(t *testing.T) {
+		name := testutil.UniqueClusterName()
+		defer testutil.DeleteCluster(name)
+		resp, err := testutil.GetClient().Post("/open-api/v1/clusters",
+			bodyWithEnsure(name, dualProvider, []string{"openai", "anthropic"}))
+		if err != nil || resp.ErrNum != 200 {
+			t.Fatalf("create failed: err=%v ErrNum=%d ErrMsg=%s", err, resp.ErrNum, resp.ErrMsg)
+		}
+		assert.Equal(t, []interface{}{"openai", "anthropic"}, mustReadEnsure(t, readBackEnsure, name))
+		v, _, _ := exportedEnsure(t, name)
+		assert.Equal(t, []interface{}{"openai", "anthropic"}, v)
+	})
+
+	rejected := []struct {
+		id       string
+		ensure   []string
+		provider func() string
+		wantMsg  []string
+	}{
+		{"CL-1-204", []string{"gemini"}, func() string { return dualProvider },
+			[]string{"ensure_reasoning_content", "unsupported protocol"}},
+		{"CL-1-205", []string{"foo"}, func() string { return dualProvider },
+			[]string{"ensure_reasoning_content", "unsupported protocol"}},
+		{"CL-1-206", []string{"openai", "openai"}, func() string { return dualProvider },
+			[]string{"ensure_reasoning_content", "duplicate"}},
+		{"CL-1-207", []string{"anthropic"}, func() string { return openaiProvider },
+			[]string{"ensure_reasoning_content", "not supported by provider"}},
+	}
+
+	for _, tt := range rejected {
+		t.Run(tt.id+" 非法取值被拒绝：不落库且不出现在导出", func(t *testing.T) {
+			name := testutil.UniqueClusterName()
+			resp, err := testutil.GetClient().Post("/open-api/v1/clusters", bodyWithEnsure(name, tt.provider(), tt.ensure))
+			if err != nil {
+				t.Fatalf("request failed: %v", err)
+			}
+			if resp.ErrNum == 200 {
+				testutil.DeleteCluster(name)
+				t.Fatalf("expected a 4xx for %v, got 200", tt.ensure)
+			}
+			// 错误归因：消息必须能定位到字段
+			for _, msg := range tt.wantMsg {
+				assert.Contains(t, resp.ErrMsg, msg)
+			}
+			// 回读零变更：集群不得存在
+			getResp, err := testutil.GetClient().Get("/open-api/v1/clusters/" + name)
+			if err != nil {
+				t.Fatalf("get cluster failed: %v", err)
+			}
+			if getResp.ErrNum == 200 {
+				testutil.DeleteCluster(name)
+				t.Fatalf("cluster %s must not exist after a rejected create", name)
+			}
+			// 防泄漏：被拒绝的配置不得进入 InnerAPI 导出产物
+			if _, _, inExport := exportedEnsure(t, name); inExport {
+				t.Fatalf("rejected cluster %s must not leak into the export", name)
+			}
+		})
+	}
+}
+
+// mustReadEnsure 断言字段存在并返回其值。
+func mustReadEnsure(t *testing.T, read func(*testing.T, string) (interface{}, bool), cluster string) interface{} {
+	t.Helper()
+	v, ok := read(t, cluster)
+	if !ok {
+		t.Fatalf("ensure_reasoning_content missing from readback of %s", cluster)
+	}
+	return v
+}

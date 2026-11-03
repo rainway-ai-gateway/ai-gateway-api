@@ -402,6 +402,7 @@ provider 对下游（cluster 引用快照、实例池同步、配置导出、bat
 > - 通用约定：对可选的 map / 数组字段（`keys`、`tiers`、`protocol_paths` 等），省略与传 `null` 等价，均保留原值；显式传入空集合（`[]` / `{}`）按全量替换处理，即清空该字段（仍须通过对应字段校验）。
 > - `keys` 作为数组，**显式提供时按全量替换**处理，即调用方需传入完整的最新 Key 列表；省略时保留原值。Key 的 `name` 删除/重命名会校验无 cluster 仍引用旧 name；若被引用，返回 `409 Conflict`。
 > - `models` 作为数组，**显式提供时按全量替换**处理；省略时保留原值。删除 model 会校验无 cluster 仍引用该 model；若被引用，返回 `409 Conflict`。
+> - `model_protocols` 作为数组，**显式提供时按全量替换**处理。收窄（移除协议）会校验无 cluster 的 `llm_config.ensure_reasoning_content` 仍引用被移除的协议；若被引用，返回 `409 Conflict`（消息含 provider 名、协议名与引用它的 cluster 名）。放宽不受限制。
 > - `tiers`、`time_zone`、`model_endpoint`：提供即更新，省略保留原值。`time_zone` 取值须为合法时区名（如 `Asia/Shanghai`、`UTC`）。
 > - `protocol_paths`：提供即全量替换，**省略或传 `null` 保留原值；清空（禁用路径改写）须显式传入 `"protocol_paths": {}`**。键必须是**更新后** `model_protocols` 已声明协议的子集——同时调整 `model_protocols` 与 `protocol_paths` 时，须在同一个请求中给出合法组合。
 

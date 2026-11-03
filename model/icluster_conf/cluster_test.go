@@ -1350,6 +1350,28 @@ func TestNewBfeClusterConf(t *testing.T) {
 		assert.False(t, *nue.RedactSecrets)
 	})
 
+	t.Run("ensure_reasoning_content export", func(t *testing.T) {
+		providerKeyTable := map[string][]iprovider.ProviderKey{
+			"openai": {{Name: "key-primary", Key: "sk-aaaaaaaaaaaa"}},
+		}
+		providerProtocolTable := map[string][]string{"openai": {"openai", "anthropic"}}
+
+		exportEnsure := func(c *Cluster) []string {
+			conf, err := NewBfeClusterConf(context.Background(), "v1", []*Cluster{c}, nil,
+				providerKeyTable, providerProtocolTable, nil, nil, nil)
+			assert.NoError(t, err)
+			return (*conf.Config)["c1"].AIConf.EnsureReasoningContent
+		}
+
+		// unset -> absent (BFE zero value = disabled)
+		assert.Nil(t, exportEnsure(newTestClusterLLMWithoutNue()))
+
+		// set -> passed through as-is, no intersection with model_protocols
+		set := newTestClusterLLMWithoutNue()
+		set.LLMConfig.EnsureReasoningContent = []string{"openai", "anthropic"}
+		assert.Equal(t, []string{"openai", "anthropic"}, exportEnsure(set))
+	})
+
 	t.Run("price_miss_action export (issue #1479)", func(t *testing.T) {
 		providerKeyTable := map[string][]iprovider.ProviderKey{
 			"openai": {{Name: "key-primary", Key: "sk-aaaaaaaaaaaa"}},
@@ -1646,4 +1668,112 @@ func TestClusterManager_DeleteCluster_RecordsFailedOperationLog(t *testing.T) {
 	assert.Equal(t, string(ioperlog.ResourceTypeCluster), entry.ResourceType)
 	assert.Equal(t, ioperlog.StatusFailed, entry.Status)
 	assert.Contains(t, entry.ErrorMsg, "route in use")
+}
+
+// TestValidateClusterLLMConfigEnsureReasoningContent covers the provider
+// cross-check: an accepted protocol list must be a subset of the provider's
+// model_protocols, and an empty provider list means ["openai"] (mirroring
+// bfe's modelprotocol.Supports), so an accepted config never fails the load.
+func TestValidateClusterLLMConfigEnsureReasoningContent(t *testing.T) {
+	cm := &ClusterManager{}
+
+	newProvider := func(protocols []string) *iprovider.Provider {
+		return &iprovider.Provider{
+			Name:           "deepseek",
+			Models:         []string{"deepseek-chat"},
+			ModelProtocols: protocols,
+		}
+	}
+	newLLM := func(protocols []string) *LLMConfig {
+		return &LLMConfig{
+			Provider:               lib.PString("deepseek"),
+			Models:                 []string{"deepseek-chat"},
+			EnsureReasoningContent: protocols,
+		}
+	}
+
+	// declared protocols
+	assert.NoError(t, cm.validateClusterLLMConfigAgainstProvider(
+		newLLM([]string{"openai"}), newProvider([]string{"openai", "anthropic"})))
+	assert.NoError(t, cm.validateClusterLLMConfigAgainstProvider(
+		newLLM(nil), newProvider([]string{"openai"})))
+	assert.Error(t, cm.validateClusterLLMConfigAgainstProvider(
+		newLLM([]string{"anthropic"}), newProvider([]string{"openai"})))
+
+	// empty provider protocols defaults to ["openai"]
+	assert.NoError(t, cm.validateClusterLLMConfigAgainstProvider(
+		newLLM([]string{"openai"}), newProvider(nil)))
+	assert.Error(t, cm.validateClusterLLMConfigAgainstProvider(
+		newLLM([]string{"anthropic"}), newProvider(nil)))
+}
+
+// TestProviderProtocolRefChecker covers the provider-narrowing guard: a
+// model_protocols narrowing that would invalidate a referencing cluster's
+// ensure_reasoning_content must be rejected with a conflict, while broadening
+// and unrelated providers stay untouched.
+func TestProviderProtocolRefChecker(t *testing.T) {
+	newProvider := func(name string, protocols ...string) *iprovider.Provider {
+		return &iprovider.Provider{Name: name, ModelProtocols: protocols}
+	}
+	clusterOf := func(name, provider string, ensure ...string) *Cluster {
+		return &Cluster{
+			Name: name,
+			LLMConfig: &LLMConfig{
+				Provider:               lib.PString(provider),
+				EnsureReasoningContent: ensure,
+			},
+		}
+	}
+	newCM := func(clusters ...*Cluster) *ClusterManager {
+		return &ClusterManager{
+			storager: &fakeClusterStorager{
+				fetchClusterListFn: func(ctx context.Context, param *ClusterFilter) ([]*Cluster, error) {
+					return clusters, nil
+				},
+			},
+		}
+	}
+
+	t.Run("no referencing cluster", func(t *testing.T) {
+		cm := newCM(clusterOf("c1", "other", "anthropic"))
+		assert.NoError(t, cm.ProviderProtocolRefChecker(context.Background(),
+			newProvider("p1", "openai", "anthropic"), newProvider("p1", "openai")))
+	})
+
+	t.Run("narrowing referenced protocol is rejected", func(t *testing.T) {
+		cm := newCM(clusterOf("c1", "p1", "anthropic"))
+		err := cm.ProviderProtocolRefChecker(context.Background(),
+			newProvider("p1", "openai", "anthropic"), newProvider("p1", "openai"))
+		if assert.Error(t, err) {
+			assert.Contains(t, err.Error(), "p1")
+			assert.Contains(t, err.Error(), "anthropic")
+			assert.Contains(t, err.Error(), "c1")
+		}
+	})
+
+	t.Run("broadening is allowed", func(t *testing.T) {
+		cm := newCM(clusterOf("c1", "p1", "anthropic"))
+		assert.NoError(t, cm.ProviderProtocolRefChecker(context.Background(),
+			newProvider("p1", "openai"), newProvider("p1", "openai", "anthropic")))
+	})
+
+	t.Run("narrowing an unreferenced protocol is allowed", func(t *testing.T) {
+		cm := newCM(clusterOf("c1", "p1", "openai"))
+		assert.NoError(t, cm.ProviderProtocolRefChecker(context.Background(),
+			newProvider("p1", "openai", "gemini"), newProvider("p1", "openai")))
+	})
+
+	t.Run("cluster without llm_config or provider is skipped", func(t *testing.T) {
+		cm := newCM(
+			&Cluster{Name: "c-no-llm"},
+			&Cluster{Name: "c-no-provider", LLMConfig: &LLMConfig{EnsureReasoningContent: []string{"anthropic"}}},
+		)
+		assert.NoError(t, cm.ProviderProtocolRefChecker(context.Background(),
+			newProvider("p1", "openai", "anthropic"), newProvider("p1", "openai")))
+	})
+
+	t.Run("nil new provider is tolerated", func(t *testing.T) {
+		cm := newCM()
+		assert.NoError(t, cm.ProviderProtocolRefChecker(context.Background(), nil, nil))
+	})
 }

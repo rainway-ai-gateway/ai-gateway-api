@@ -1047,3 +1047,231 @@ func TestClusters_Update_PriceMissAction(t *testing.T) {
 		}
 	})
 }
+
+// TestClusters_Update_EnsureReasoningContent 覆盖 llm_config.ensure_reasoning_content
+// 的 PATCH 语义。每个用例都按集成测试检查清单执行：
+//   - 省略字段保留原值（且断言其余未提交字段同样不变）
+//   - 显式空数组清空（与省略形成对照）
+//   - 4xx 后回读零变更
+//   - 反向引用完整性：provider 收窄协议后既有 cluster 配置的完整性
+func TestClusters_Update_EnsureReasoningContent(t *testing.T) {
+	provider := testutil.UniqueProviderName()
+	if _, err := testutil.CreateProvider(provider, map[string]interface{}{
+		"models":          []string{"deepseek-chat"},
+		"model_protocols": []string{"openai", "anthropic"},
+	}); err != nil {
+		t.Fatalf("setup provider failed: %v", err)
+	}
+	defer testutil.DeleteProvider(provider)
+
+	llmWith := func(ensure []string, maxRetries int) map[string]interface{} {
+		llm := map[string]interface{}{
+			"models":   []string{"deepseek-chat"},
+			"provider": provider,
+			"key_policy": map[string]interface{}{
+				"strategy":    "weighted_random",
+				"max_retries": maxRetries,
+			},
+		}
+		if ensure != nil {
+			llm["ensure_reasoning_content"] = ensure
+		}
+		return llm
+	}
+
+	newCluster := func(t *testing.T, ensure []string) string {
+		t.Helper()
+		name := testutil.UniqueClusterName()
+		resp, err := testutil.GetClient().Post("/open-api/v1/clusters", map[string]interface{}{
+			"name": name, "llm_config": llmWith(ensure, 3),
+		})
+		if err != nil || resp.ErrNum != 200 {
+			t.Fatalf("setup create cluster failed: err=%v ErrNum=%d ErrMsg=%s", err, resp.ErrNum, resp.ErrMsg)
+		}
+		return name
+	}
+
+	readLLM := func(t *testing.T, cluster string) map[string]interface{} {
+		t.Helper()
+		resp, err := testutil.GetClient().Get("/open-api/v1/clusters/" + cluster)
+		if err != nil {
+			t.Fatalf("get cluster failed: %v", err)
+		}
+		testutil.AssertSuccess(t, resp)
+		var data map[string]interface{}
+		json.Unmarshal(resp.Data, &data)
+		llm, _ := data["llm_config"].(map[string]interface{})
+		return llm
+	}
+
+	readEnsure := func(t *testing.T, cluster string) []interface{} {
+		t.Helper()
+		v, _ := readLLM(t, cluster)["ensure_reasoning_content"].([]interface{})
+		return v
+	}
+
+	exported := func(t *testing.T, cluster string) []interface{} {
+		t.Helper()
+		resp, err := testutil.GetClient().Get("/inner-api/v1/configs/tls_conf/server_data_conf")
+		if err != nil {
+			t.Fatalf("export request failed: %v", err)
+		}
+		testutil.AssertSuccess(t, resp)
+		var data map[string]interface{}
+		json.Unmarshal(resp.Data, &data)
+		clusterConf, _ := data["ClusterConf"].(map[string]interface{})
+		config, _ := clusterConf["Config"].(map[string]interface{})
+		entry, _ := config[cluster].(map[string]interface{})
+		aiConf, _ := entry["AIConf"].(map[string]interface{})
+		v, _ := aiConf["EnsureReasoningContent"].([]interface{})
+		return v
+	}
+
+	t.Run("CL-4-201 省略字段保留原值且其余 llm_config 不变", func(t *testing.T) {
+		name := newCluster(t, []string{"openai"})
+		defer testutil.DeleteCluster(name)
+		resp, err := testutil.GetClient().Patch("/open-api/v1/clusters/"+name, map[string]interface{}{
+			"description": "patch unrelated field only",
+		})
+		if err != nil || resp.ErrNum != 200 {
+			t.Fatalf("patch failed: err=%v ErrNum=%d ErrMsg=%s", err, resp.ErrNum, resp.ErrMsg)
+		}
+		assert.Equal(t, []interface{}{"openai"}, readEnsure(t, name))
+		// 未提交字段同样不得被重置：key_policy.max_retries 仍为 3
+		assert.Equal(t, true, readLLM(t, name)["provider"] == provider)
+		kp, _ := readLLM(t, name)["key_policy"].(map[string]interface{})
+		assert.Equal(t, float64(3), kp["max_retries"])
+	})
+
+	t.Run("CL-4-202 显式设置后回读与导出均生效", func(t *testing.T) {
+		name := newCluster(t, nil)
+		defer testutil.DeleteCluster(name)
+		resp, err := testutil.GetClient().Patch("/open-api/v1/clusters/"+name, map[string]interface{}{
+			"llm_config": llmWith([]string{"openai", "anthropic"}, 3),
+		})
+		if err != nil || resp.ErrNum != 200 {
+			t.Fatalf("patch failed: err=%v ErrNum=%d ErrMsg=%s", err, resp.ErrNum, resp.ErrMsg)
+		}
+		assert.Equal(t, []interface{}{"openai", "anthropic"}, readEnsure(t, name))
+		assert.Equal(t, []interface{}{"openai", "anthropic"}, exported(t, name))
+	})
+
+	t.Run("CL-4-203 显式空数组清空（与省略对照）", func(t *testing.T) {
+		name := newCluster(t, []string{"openai"})
+		defer testutil.DeleteCluster(name)
+		resp, err := testutil.GetClient().Patch("/open-api/v1/clusters/"+name, map[string]interface{}{
+			"llm_config": llmWith([]string{}, 3),
+		})
+		if err != nil || resp.ErrNum != 200 {
+			t.Fatalf("patch failed: err=%v ErrNum=%d ErrMsg=%s", err, resp.ErrNum, resp.ErrMsg)
+		}
+		if v := readEnsure(t, name); len(v) != 0 {
+			t.Fatalf("ensure_reasoning_content = %v, want empty after clearing", v)
+		}
+		if v := exported(t, name); len(v) != 0 {
+			t.Fatalf("exported EnsureReasoningContent = %v, want null/empty after clearing", v)
+		}
+	})
+
+	t.Run("CL-4-204 非法值 4xx 后回读零变更", func(t *testing.T) {
+		name := newCluster(t, []string{"openai"})
+		defer testutil.DeleteCluster(name)
+		before := readLLM(t, name)
+		resp, err := testutil.GetClient().Patch("/open-api/v1/clusters/"+name, map[string]interface{}{
+			"llm_config": llmWith([]string{"gemini"}, 9),
+		})
+		if err != nil {
+			t.Fatalf("patch failed: %v", err)
+		}
+		if resp.ErrNum == 200 {
+			t.Fatalf("expected a 4xx for gemini, got 200")
+		}
+		assert.Contains(t, resp.ErrMsg, "ensure_reasoning_content")
+		assert.Contains(t, resp.ErrMsg, "unsupported protocol")
+		// 回读零变更：本字段与同 body 里其它被尝试修改的字段都必须保持原值
+		after := readLLM(t, name)
+		assert.Equal(t, before["ensure_reasoning_content"], after["ensure_reasoning_content"])
+		beforeKP, _ := before["key_policy"].(map[string]interface{})
+		afterKP, _ := after["key_policy"].(map[string]interface{})
+		assert.Equal(t, beforeKP["max_retries"], afterKP["max_retries"])
+	})
+
+	// CL-4-205 / CL-4-206：反向引用完整性。provider 收窄 model_protocols 时，
+	// 若某个引用它的 cluster 的 ensure_reasoning_content 含被移除的协议，必须
+	// 409 拒绝（合同见 providers.md 的 PATCH 行为说明 + 本次 guard 变更）。
+	patchProvider := func(t *testing.T, name string, protocols []string) *testutil.APIResponse {
+		t.Helper()
+		resp, err := testutil.GetClient().Patch("/open-api/v1/providers/"+name, map[string]interface{}{
+			"instance_pool":   []interface{}{map[string]interface{}{"addr": "10.0.0.1", "weight": 100, "port": 8080}},
+			"models":          []string{"deepseek-chat"},
+			"model_protocols": protocols,
+		})
+		if err != nil {
+			t.Fatalf("patch provider failed: %v", err)
+		}
+		return resp
+	}
+	readProviderProtocols := func(t *testing.T, name string) []interface{} {
+		t.Helper()
+		resp, err := testutil.GetClient().Get("/open-api/v1/providers/" + name)
+		if err != nil {
+			t.Fatalf("get provider failed: %v", err)
+		}
+		testutil.AssertSuccess(t, resp)
+		var data map[string]interface{}
+		json.Unmarshal(resp.Data, &data)
+		v, _ := data["model_protocols"].([]interface{})
+		return v
+	}
+
+	t.Run("CL-4-205 收窄被引用协议：409 且 provider 与 cluster 均零变更", func(t *testing.T) {
+		name := newCluster(t, []string{"anthropic"})
+		defer testutil.DeleteCluster(name)
+
+		resp := patchProvider(t, provider, []string{"openai"})
+		if resp.ErrNum != 409 {
+			t.Fatalf("expected 409 for a narrowing that invalidates cluster %s, got %d %s",
+				name, resp.ErrNum, resp.ErrMsg)
+		}
+		// 错误可归因：provider、协议、引用它的 cluster 都要出现
+		assert.Contains(t, resp.ErrMsg, provider)
+		assert.Contains(t, resp.ErrMsg, "anthropic")
+		assert.Contains(t, resp.ErrMsg, name)
+
+		// 回读零变更：provider 仍保留双协议
+		assert.Equal(t, []interface{}{"openai", "anthropic"}, readProviderProtocols(t, provider))
+		// cluster 配置不变
+		assert.Equal(t, []interface{}{"anthropic"}, readEnsure(t, name))
+		// 导出仍然合法（ModelProtocols 仍含 anthropic）
+		exp, err := testutil.GetClient().Get("/inner-api/v1/configs/tls_conf/server_data_conf")
+		if err != nil {
+			t.Fatalf("export failed: %v", err)
+		}
+		var edata map[string]interface{}
+		json.Unmarshal(exp.Data, &edata)
+		cc, _ := edata["ClusterConf"].(map[string]interface{})
+		cfg, _ := cc["Config"].(map[string]interface{})
+		entry, _ := cfg[name].(map[string]interface{})
+		aiConf, _ := entry["AIConf"].(map[string]interface{})
+		protocols, _ := aiConf["ModelProtocols"].([]interface{})
+		assert.Contains(t, protocols, "anthropic")
+	})
+
+	t.Run("CL-4-206 收窄但无引用：允许", func(t *testing.T) {
+		// 该 cluster 只用 openai，收窄到 ["openai"] 不影响它
+		name := newCluster(t, []string{"openai"})
+		defer testutil.DeleteCluster(name)
+
+		resp := patchProvider(t, provider, []string{"openai"})
+		if resp.ErrNum != 200 {
+			t.Fatalf("expected 200 for an unreferenced narrowing, got %d %s", resp.ErrNum, resp.ErrMsg)
+		}
+		assert.Equal(t, []interface{}{"openai"}, readProviderProtocols(t, provider))
+		// 清理：恢复双协议，避免影响同包其它用例（TestMain 共享一个服务）
+		restore := patchProvider(t, provider, []string{"openai", "anthropic"})
+		if restore.ErrNum != 200 {
+			t.Fatalf("restore provider failed: %d %s", restore.ErrNum, restore.ErrMsg)
+		}
+	})
+
+}

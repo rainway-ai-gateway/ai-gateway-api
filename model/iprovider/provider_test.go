@@ -196,6 +196,65 @@ func TestProviderManager_UpdateProvider(t *testing.T) {
 		assert.Equal(t, "5.6.7.8", hookNew.InstancePool[0].Addr)
 	})
 
+	t.Run("sync hook invoked when model_protocols changes", func(t *testing.T) {
+		store := &fakeProviderStorager{
+			fetchFn: func(ctx context.Context, filter *ProviderFilter) (*Provider, error) {
+				return &Provider{
+					Name:           "deepseek",
+					ModelProtocols: []string{"openai", "anthropic"},
+				}, nil
+			},
+		}
+		m := NewProviderManager(&fakeTxn{}, store)
+
+		hookCalled := 0
+		var hookNew *Provider
+		hook := func(ctx context.Context, oldProvider, newProvider *Provider) error {
+			hookCalled++
+			hookNew = newProvider
+			return nil
+		}
+
+		param := validProviderParam()
+		param.ModelProtocols = []string{"openai"}
+		err := m.UpdateProvider(ctx, "deepseek", param, hook)
+		require.NoError(t, err)
+		assert.Equal(t, 1, hookCalled, "a protocol narrowing must reach the reference checkers")
+		require.NotNil(t, hookNew)
+		assert.Equal(t, []string{"openai"}, hookNew.ModelProtocols)
+	})
+
+	t.Run("sync hook not invoked when model_protocols unchanged", func(t *testing.T) {
+		// The stored provider must match the param on every other
+		// cluster-relevant field, otherwise those changes would trigger the
+		// hooks and the assertion would not isolate model_protocols.
+		store := &fakeProviderStorager{
+			fetchFn: func(ctx context.Context, filter *ProviderFilter) (*Provider, error) {
+				return &Provider{
+					Name:           "deepseek",
+					ModelProtocols: []string{"openai"},
+					Models:         []string{"deepseek-chat", "deepseek-coder"},
+					Keys:           []ProviderKey{{Name: "key-primary", Key: "sk-aaaaaaaaaaaa"}},
+					InstancePool:   []ProviderInstance{{Addr: "api.deepseek.com", Port: 443, Weight: 100}},
+					InstanceSource: InstanceSourceInstancePool,
+				}, nil
+			},
+		}
+		m := NewProviderManager(&fakeTxn{}, store)
+
+		hookCalled := 0
+		hook := func(ctx context.Context, oldProvider, newProvider *Provider) error {
+			hookCalled++
+			return nil
+		}
+
+		param := validProviderParam()
+		param.ModelProtocols = []string{"openai"}
+		err := m.UpdateProvider(ctx, "deepseek", param, hook)
+		require.NoError(t, err)
+		assert.Equal(t, 0, hookCalled)
+	})
+
 	t.Run("sync hook not invoked when instance_pool unchanged", func(t *testing.T) {
 		param := validProviderParam()
 		param.InstancePool = []ProviderInstance{

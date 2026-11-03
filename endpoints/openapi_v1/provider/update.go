@@ -61,6 +61,7 @@ func UpdateAction(req *http.Request) (interface{}, error) {
 		container.ClusterManager.ProviderInstancePoolSyncer,
 		container.ClusterManager.ProviderKeyRefChecker,
 		container.ClusterManager.ProviderModelRefChecker,
+		container.ClusterManager.ProviderProtocolRefChecker,
 	); err != nil {
 		return nil, err
 	}
