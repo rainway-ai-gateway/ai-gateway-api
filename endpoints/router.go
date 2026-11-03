@@ -62,10 +62,7 @@ func RegisterRouters(router *mux.Router) {
 	fs := http.FileServer(root)
 	fh := fileHandler(root, fs)
 
-	router.MethodNotAllowedHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		res := &xreq.Result{Code: 405, ErrMsg: "Method Not Allowed"}
-		xreq.Render(w, r, res)
-	})
+	router.MethodNotAllowedHandler = methodNotAllowedHandler(router)
 
 	router.Use(middleware.MCRecovery)
 	router.Use(middleware.MCLogger)
@@ -96,4 +93,53 @@ func RegisterRouters(router *mux.Router) {
 
 	openapi_v1.RegisterEndpoints(router)
 	innerapi_v1.RegisterRouter(router)
+}
+
+// methodNotAllowedHandler renders the JSON 405 body and, per RFC 9110 §15.5.6,
+// advertises the methods the matched path actually supports.
+func methodNotAllowedHandler(router *mux.Router) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if allow := allowedMethods(router, r); len(allow) > 0 {
+			w.Header().Set("Allow", strings.Join(allow, ", "))
+		}
+
+		res := &xreq.Result{Code: 405, ErrMsg: "Method Not Allowed"}
+		xreq.Render(w, r, res)
+	})
+}
+
+// allowProbeMethods is the set of methods probed when computing the Allow
+// header. Keep it in sync with the method convention in
+// design-docs/api-define/OpenAPI接口定义/00-common.md.
+var allowProbeMethods = []string{
+	http.MethodGet, http.MethodHead, http.MethodOptions,
+	http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete,
+}
+
+// allowedMethods returns the methods that route to r's path, in a stable order.
+// It probes the same router so sub-routers, path variables and other matchers
+// are honoured: Router.Match only exposes the route that failed the method
+// matcher, and iterating router.routes cannot see through
+// PathPrefix(...).Subrouter().
+func allowedMethods(router *mux.Router, r *http.Request) []string {
+	var allowed []string
+
+	for _, method := range allowProbeMethods {
+		if method == r.Method {
+			continue
+		}
+
+		probe := r.Clone(r.Context())
+		probe.Method = method
+
+		var match mux.RouteMatch
+		// Router.Match also reports true (with MatchErr set) for a method
+		// mismatch or a not-found path once the custom handlers are installed,
+		// so a clean match on a concrete route is required.
+		if router.Match(probe, &match) && match.MatchErr == nil && match.Route != nil {
+			allowed = append(allowed, method)
+		}
+	}
+
+	return allowed
 }

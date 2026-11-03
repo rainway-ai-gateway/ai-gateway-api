@@ -30,7 +30,15 @@
 | ErrMsg | string | 文本消息，成功时为 "success"，失败时为错误信息 |
 | WorkMode | string | 控制台工作模式 |
 
-## 3. 版本控制机制
+## 3. 方法不支持（405）
+
+InnerAPI 与 OpenAPI 共用同一根路由的 405 处理（`endpoints/router.go`）：
+
+- 路径存在但 method 不支持时返回 `405`，响应头 `Allow` 列出该路径实际支持的方法（逗号 + 空格分隔，顺序固定）；
+- 响应体为 `{"ErrNum":405,"ErrMsg":"Method Not Allowed"}`；
+- 其它错误（404/422/500 等）不携带 `Allow`。
+
+## 4. 版本控制机制
 
 所有导出接口支持 `version` 查询参数：
 
