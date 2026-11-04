@@ -79,8 +79,8 @@
 
 | 参数名 | 类型 | 参数含义 | 必填 | 补充描述 | 合法性条件 |
 | - | - | - | - | - | - |
-| page | int | 页码 | N | 默认1 | 有效值 >0；<=0 按 1 处理 |
-| page_size | int | 每页条数 | N | 默认20，最大100 | 有效范围 1-100；<1 按 20 处理，>100 按 100 处理 |
+| page | int | 页码 | N | **未传分页参数时返回全部匹配记录**；显式分页时默认 1 | 有效值 >0；<=0 按 1 处理 |
+| page_size | int | 每页条数 | N | **未传分页参数时返回全部匹配记录**；显式分页时默认 20，最大 100 | 有效范围 1-100；<1 按 20 处理，>100 按 100 处理 |
 | id | int64 | 按Entity-Type内部ID过滤 | N | - | - |
 | type_name | string | 按类型名过滤 | N | - | - |
 | level | int | 按层级级别过滤 | N | - | - |
@@ -92,7 +92,7 @@
 | 参数名 | 类型 | 参数含义 | 补充描述 |
 | - | - | - | - |
 | list | []EntityType | Entity-Type列表 | 元素字段同3.2.1创建Entity-Type返回数据 |
-| pagination | object | 分页信息 | 包含`page`、`page_size`、`total`；未传分页参数时为 `page=1`、`page_size=20`；`total` 为满足 `id`/`type_name`/`level` 过滤条件的总条数 |
+| pagination | object | 分页信息 | 包含`page`、`page_size`、`total`；未传分页参数时返回全部匹配记录，`page=1`、`page_size=total`（空集合为 0）；`total` 为满足 `id`/`type_name`/`level` 过滤条件的总条数 |
 
 ---
 

@@ -105,9 +105,11 @@
 | 严格 | `page <= 0` 或 `page_size < 1` / `> 100` → `422 Param Illegal` | `/api-keys`（`api-keys.md` §2.2） |
 | 截断（clamp） | `page <= 0` 按 1；`page_size < 1` 按 20；`> 100` 按 100 | `/entities`、`/entity-types` |
 
-> **登记例外**：`/providers` 在未传 `page`/`page_size` 时返回**全部匹配记录**，
-> 响应 `pagination.page=1`、`pagination.page_size=total`，且 `page_size` 上限为 1000
-> （见 `providers.md` §2.2）。该例外不再扩大，新增列表接口一律遵循上面的通用基线。
+> **登记例外（未传分页参数时返回全部匹配记录）**：`/providers`（`page_size=total`，上限 1000，见 `providers.md` §2.2）、
+> `/entities`、`/entity-types`（`page_size=total`，无额外上限，见对应接口文档 §2.2）。
+> 这些接口在**未传 `page`/`page_size`**（含空串）时不下推分页，响应 `pagination.page=1`、
+> `page_size=total`（空集合为 0）；一旦传入任一参数，仍按各自接口表分页并应用默认值/截断。
+> 例外清单不再扩大，新增列表接口一律遵循上面的通用基线。
 
 # 公共参数类型
 
