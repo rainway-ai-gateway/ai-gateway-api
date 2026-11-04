@@ -108,3 +108,31 @@ Entity 新增 `description` 字段（api-define entities.md §2.1-§2.5，变更
 3. 新增批量写入口时，若列集合可能因数据而变（可空列、可选子结构），先在模型层归一（补齐默认值
    或丢弃只读字段），再考虑 DAO 层兜底；
 4. 变更记录：`design-docs/modifications/2026-10-20-issue-258-ai-cache-rules-drop-readonly-timestamps/`。
+## 9. JSON 列的例外：`clusters.llm_config` 是"整段替换"而非字段级合并（issue #1448 实施时校准）
+
+§1 的 nil-skip 约定只适用于**标量列**。以 JSON 文本落库的聚合配置是另一套语义：
+
+- `clusters.llm_config` 由 `icluster_conf.LLMConfig` 序列化后整列覆盖。顶层 `llm_config` 本身仍受
+  nil-skip 保护（`PATCH` 不带 `llm_config` 则整列不动），但**一旦请求体里出现 `llm_config`**，
+  它就被整体重建并覆盖原值：
+
+  ```
+  update_basic.go:138            rst.LLMConfig = normalizeLLMConfig(param.LLMConfig)   // 只按请求体重建
+  storage/rdb/cluster_conf/cluster.go:77   daoClusterParam.LLMConfig = <重建后的 JSON> // 覆盖整列
+  normalizeKeyAffinity(...)      // 未传的子字段一律补默认值
+  ```
+
+- 后果：`{"llm_config":{"key_affinity":{"penalty_ttl_auth":120}}}` 会清空 `models` / `keys` / `provider`，
+  并把 `key_affinity` 其余子字段（`enabled` / `ttl` / `redis_prefix` / `penalty_enable` / 其他新字段）
+  重置为默认值。这不是 bug，而是"聚合 JSON 列 + 重建式归一"的必然结果；
+- 同理，`normalize*` 函数是**逐字段重建**结构体，新增子字段时必须同步加入归一函数，否则会被静默丢弃
+  （issue #1448 的 `normalizeKeyAffinity` 即按此处理）。
+
+使用约定：
+
+1. 修改 `llm_config` 任一子字段前先 `GET` 集群，改完整个对象再提交，不要只发片段；
+2. 契约文档必须在 PATCH 章节写明"`llm_config` 与 `key_affinity` 均为整体替换"，避免调用方按标量列的
+   PATCH 直觉使用；
+3. 校验与默认值的顺序是"先校验、后归一"（`UpsertParam.Validate` 在 `xreq.Bind*` 阶段执行，
+   `normalizeLLMConfig` 在其后），因此 `nil` 能补默认、显式非法值能返回 422；
+4. 变更记录：`design-docs/modifications/2026-11-04-issue-1448-key-penalty-ttl/`。

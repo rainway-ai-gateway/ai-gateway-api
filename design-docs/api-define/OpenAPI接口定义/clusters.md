@@ -63,7 +63,9 @@
             "enabled": true,
             "ttl": 600,
             "redis_prefix": "bfe:ai:key_affinity",
-            "penalty_enable": true
+            "penalty_enable": true,
+            "penalty_ttl_429": 60,
+            "penalty_ttl_auth": 300
         },
         "normalize_upstream_error": {
             "enabled": true,
@@ -230,6 +232,8 @@
 | ttl | int | 绑定空闲超时时间 | N | 单位秒，默认 `600`；命中绑定后 BFE 会刷新 TTL，持续请求则绑定保持 | 非必填；若传入，须为 `>0` 的整数 |
 | redis_prefix | string | Redis key 前缀 | N | 默认 `"bfe:ai:key_affinity"` | 非必填；若传入，必须非空 |
 | penalty_enable | bool | 是否开启 Key 惩罚 | N | 默认 `true`；为 `true` 时，近期返回 429/401/403 的 Key 会被跳过 | 非必填；必须为 bool |
+| penalty_ttl_429 | int | 上游 429 时的惩罚时长 | N | 单位秒，默认 `60`；与 `ttl`（绑定空闲超时，默认 600）无关；`0` / 缺省不是「关闭」，缺省取默认值 | 非必填；若传入须为 `[10, 600]` 的整数 |
+| penalty_ttl_auth | int | 上游 401/402/403 时的惩罚时长 | N | 单位秒，默认 `300`；语义同上 | 非必填；若传入须为 `[60, 1800]` 的整数 |
 
 **表：上游错误归一配置（`llm_config.normalize_upstream_error`）**
 
@@ -320,6 +324,8 @@
   - `ttl` 须为 `>0` 的整数；
   - `redis_prefix` 若传入须非空；
   - `penalty_enable` 必须为 bool。
+  - `penalty_ttl_429` 若传入须为 `[10, 600]` 的整数（`0` / 负数 / 越界返回 422）；
+  - `penalty_ttl_auth` 若传入须为 `[60, 1800]` 的整数（同上）。
 - `llm_config.normalize_upstream_error` 若传入：
   - `enabled` / `stream_enabled` / `redact_secrets` 必须为 bool；
   - `unrecognized_action` 取值仅支持 `passthrough`、`rewrite_generic`；
@@ -629,6 +635,7 @@
 > **注意：**
 > - `sub_clusters` 与 `scheduler` 为系统内部自动生成，更新时不支持手动修改。
 > - `llm_config.keys` 作为数组，按**全量替换**处理，即调用方需传入完整的最新 Key 引用列表。这与当前 `model_mappings` 的 PATCH 语义保持一致。
+- `llm_config.key_affinity` 同样按**整体替换**处理：未传的子字段按默认值补齐（例如只传 `penalty_ttl_auth` 会把 `enabled` / `ttl` / `redis_prefix` / `penalty_enable` / `penalty_ttl_429` 重置为默认值）。修改单个字段前请先 GET 集群、再提交完整的 `llm_config`。
 
 **HTTP BODY参数示例**
 

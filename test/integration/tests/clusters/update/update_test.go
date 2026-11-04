@@ -1275,3 +1275,122 @@ func TestClusters_Update_EnsureReasoningContent(t *testing.T) {
 	})
 
 }
+
+// TestClusters_Update_KeyPenaltyTTL covers the update path of issue #1448:
+// explicit values are stored and exported to the InnerAPI, out-of-range values
+// are rejected without changing the stored config, and the key_affinity object
+// is replaced wholesale (an omitted penalty field falls back to its default).
+func TestClusters_Update_KeyPenaltyTTL(t *testing.T) {
+	provider := testutil.UniqueProviderName()
+	if _, err := testutil.CreateProvider(provider, map[string]interface{}{
+		"models": []string{"deepseek-chat"},
+	}); err != nil {
+		t.Fatalf("setup provider failed: %v", err)
+	}
+
+	clusterName := testutil.UniqueClusterName()
+	resp, err := testutil.GetClient().Post("/open-api/v1/clusters", map[string]interface{}{
+		"name": clusterName,
+		"llm_config": map[string]interface{}{
+			"models": []string{"deepseek-chat"},
+			"key_affinity": map[string]interface{}{
+				"enabled": true,
+			},
+			"provider": provider,
+		},
+	})
+	if err != nil {
+		t.Fatalf("setup failed: %v", err)
+	}
+	testutil.AssertSuccess(t, resp)
+	defer testutil.DeleteCluster(clusterName)
+
+	patchBody := func(affinity map[string]interface{}) map[string]interface{} {
+		return map[string]interface{}{
+			"llm_config": map[string]interface{}{
+				"models":       []string{"deepseek-chat"},
+				"key_affinity": affinity,
+				"provider":     provider,
+			},
+		}
+	}
+
+	t.Run("更新后回读与 InnerAPI 导出一致", func(t *testing.T) {
+		resp, err := testutil.GetClient().Patch("/open-api/v1/clusters/"+clusterName, patchBody(map[string]interface{}{
+			"enabled":          true,
+			"penalty_ttl_429":  30,
+			"penalty_ttl_auth": 120,
+		}))
+		if err != nil {
+			t.Fatalf("request failed: %v", err)
+		}
+		testutil.AssertSuccess(t, resp)
+
+		assertUpdatedClusterPenaltyTTL(t, clusterName, 30, 120)
+
+		resp, err = testutil.GetClient().Get("/inner-api/v1/configs/tls_conf/server_data_conf")
+		if err != nil {
+			t.Fatalf("inner api request failed: %v", err)
+		}
+		testutil.AssertSuccess(t, resp)
+		var innerData map[string]interface{}
+		if err := json.Unmarshal(resp.Data, &innerData); err != nil {
+			t.Fatalf("unmarshal inner data failed: %v", err)
+		}
+		clusterConf, _ := innerData["ClusterConf"].(map[string]interface{})
+		config, _ := clusterConf["Config"].(map[string]interface{})
+		cluster, _ := config[clusterName].(map[string]interface{})
+		aiconf, _ := cluster["AIConf"].(map[string]interface{})
+		keyPolicy, _ := aiconf["KeyPolicy"].(map[string]interface{})
+		assert.Equal(t, float64(30), keyPolicy["SessionAffinityPenaltyTTL429"])
+		assert.Equal(t, float64(120), keyPolicy["SessionAffinityPenaltyTTLAuth"])
+	})
+
+	t.Run("非法值 422 且回读零变更", func(t *testing.T) {
+		resp, err := testutil.GetClient().Patch("/open-api/v1/clusters/"+clusterName, patchBody(map[string]interface{}{
+			"enabled":          true,
+			"penalty_ttl_429":  30,
+			"penalty_ttl_auth": 1801,
+		}))
+		if err != nil {
+			t.Fatalf("request failed: %v", err)
+		}
+		assert.Equal(t, 422, resp.ErrNum, "penalty_ttl_auth=1801 should be rejected")
+
+		assertUpdatedClusterPenaltyTTL(t, clusterName, 30, 120)
+	})
+
+	t.Run("key_affinity 整体替换：省略的 429 档回落默认 60", func(t *testing.T) {
+		resp, err := testutil.GetClient().Patch("/open-api/v1/clusters/"+clusterName, patchBody(map[string]interface{}{
+			"enabled":          true,
+			"penalty_ttl_auth": 120,
+		}))
+		if err != nil {
+			t.Fatalf("request failed: %v", err)
+		}
+		testutil.AssertSuccess(t, resp)
+
+		assertUpdatedClusterPenaltyTTL(t, clusterName, 60, 120)
+	})
+}
+
+// assertUpdatedClusterPenaltyTTL reads the cluster back and checks both penalty
+// TTLs against the stored llm_config.
+func assertUpdatedClusterPenaltyTTL(t *testing.T, name string, want429, wantAuth int) {
+	t.Helper()
+
+	resp, err := testutil.GetClient().Get("/open-api/v1/clusters/" + name)
+	if err != nil {
+		t.Fatalf("read back failed: %v", err)
+	}
+	testutil.AssertSuccess(t, resp)
+
+	var data map[string]interface{}
+	if err := json.Unmarshal(resp.Data, &data); err != nil {
+		t.Fatalf("unmarshal failed: %v", err)
+	}
+	llm, _ := data["llm_config"].(map[string]interface{})
+	affinity, _ := llm["key_affinity"].(map[string]interface{})
+	assert.Equal(t, float64(want429), affinity["penalty_ttl_429"])
+	assert.Equal(t, float64(wantAuth), affinity["penalty_ttl_auth"])
+}

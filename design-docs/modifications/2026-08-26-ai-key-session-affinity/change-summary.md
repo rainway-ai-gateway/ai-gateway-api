@@ -25,7 +25,7 @@ BFE 数据面已实现同 cluster 下多 API-Key 的会话级亲和性：当 clu
 |------|------|
 | 配置归属 cluster | 亲和性策略跟随 cluster 的 Key 策略，放在 `llm_config.key_affinity` 中。 |
 | 复用 `llm_config` JSON 字段 | 不需要新增数据库列，降低迁移成本。 |
-| 控制面默认值与 BFE 一致 | `enabled=false`、`ttl=600`、`redis_prefix="bfe:ai:key_affinity"`、`penalty_enable=true`。 |
+| 控制面默认值与 BFE 一致 | `enabled=true`、`ttl=600`、`redis_prefix="bfe:ai:key_affinity"`、`penalty_enable=true`。 |
 | 仅控制开关与参数 | 运行时绑定关系由 BFE 维护，控制面只负责下发配置。 |
 
 ## 5. 关联文档
