@@ -238,8 +238,8 @@
 
 | 参数名 | 类型 | 参数含义 | 必填 | 补充描述 | 合法性条件 |
 | - | - | - | - | - | - |
-| page | int | 页码 | N | 默认1 | 有效值 >0；<=0 按 1 处理 |
-| page_size | int | 每页条数 | N | 默认20，最大100 | 有效范围 1-100；<1 按 20 处理，>100 按 100 处理 |
+| page | int | 页码 | N | **未传分页参数时返回全部匹配记录**；显式分页时默认 1 | 有效值 >0；<=0 按 1 处理 |
+| page_size | int | 每页条数 | N | **未传分页参数时返回全部匹配记录**；显式分页时默认 20，最大 100 | 有效范围 1-100；<1 按 20 处理，>100 按 100 处理 |
 | id | string | 按Entity ID过滤 | N | - | - |
 | name | string | 按Entity名称过滤 | N | - | - |
 | type | string | 按类型过滤 | N | - | - |
@@ -254,8 +254,8 @@
 | - | - | - | - |
 | list | []object | Entity列表 | 包含完整Entity字段 |
 | pagination | object | 分页信息 | - |
-| pagination.page | int | 当前页码 | - |
-| pagination.page_size | int | 每页条数 | - |
+| pagination.page | int | 当前页码 | 无参模式固定为 1 |
+| pagination.page_size | int | 每页条数 | 无参模式为 `total`（表示本次已返回全量，空集合为 0）；分页模式为生效页大小 |
 | pagination.total | int | 总条数 | 满足本次查询过滤条件的总条数（与分页无关） |
 
 **list 对象字段说明**

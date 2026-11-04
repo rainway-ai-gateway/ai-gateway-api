@@ -15,6 +15,8 @@
 package xreq
 
 import (
+	"net/url"
+
 	"github.com/rainway-ai-gateway/ai-gateway-api/lib/xerror"
 )
 
@@ -65,4 +67,23 @@ func ValidatePagination(page, pageSize *int) error {
 		return xerror.WrapParamErrorWithMsg("page_size must be between 1 and %d, got %d", MaxPageSize, *pageSize)
 	}
 	return nil
+}
+
+// OptionalPagination resolves pagination for list endpoints whose contract is
+// "no pagination parameters means return everything" (/providers, /entities,
+// /entity-types).
+//
+// The decision is taken from the raw query values, not from the bound pointers:
+// BindForm turns "?page=" into a non-nil pointer holding 0, which would
+// otherwise look like an explicit (invalid) page request.
+//
+// paginate == false means the caller must not push paging down and should
+// report page=DefaultPage and page_size=total after fetching.
+func OptionalPagination(values url.Values, page, pageSize *int) (int, int, bool) {
+	if values.Get("page") == "" && values.Get("page_size") == "" {
+		return DefaultPage, 0, false
+	}
+
+	effectivePage, effectivePageSize := ResolvePagination(page, pageSize)
+	return effectivePage, effectivePageSize, true
 }

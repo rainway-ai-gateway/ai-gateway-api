@@ -15,6 +15,7 @@
 package xreq
 
 import (
+	"net/url"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -25,11 +26,11 @@ import (
 
 func TestResolvePagination(t *testing.T) {
 	cases := []struct {
-		name       string
-		page       *int
-		pageSize   *int
-		wantPage   int
-		wantSize   int
+		name     string
+		page     *int
+		pageSize *int
+		wantPage int
+		wantSize int
 	}{
 		{"both missing falls back to defaults", nil, nil, DefaultPage, DefaultPageSize},
 		{"page only", lib.PInt(2), nil, 2, DefaultPageSize},
@@ -38,7 +39,7 @@ func TestResolvePagination(t *testing.T) {
 		{"zero values fall back to defaults", lib.PInt(0), lib.PInt(0), DefaultPage, DefaultPageSize},
 		{"negative page falls back", lib.PInt(-3), nil, DefaultPage, DefaultPageSize},
 		{"page_size at cap", nil, lib.PInt(MaxPageSize), DefaultPage, MaxPageSize},
-		{"page_size above cap is truncated", nil, lib.PInt(MaxPageSize+1), DefaultPage, MaxPageSize},
+		{"page_size above cap is truncated", nil, lib.PInt(MaxPageSize + 1), DefaultPage, MaxPageSize},
 	}
 
 	for _, tc := range cases {
@@ -70,6 +71,75 @@ func TestValidatePagination(t *testing.T) {
 			err := ValidatePagination(tc.page, tc.pageSize)
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), tc.wantMsg)
+		})
+	}
+}
+
+func TestOptionalPagination(t *testing.T) {
+	cases := []struct {
+		name       string
+		values     url.Values
+		page       *int
+		pageSize   *int
+		wantPage   int
+		wantSize   int
+		wantPaging bool
+	}{
+		{
+			name:     "no parameters means return everything",
+			values:   url.Values{},
+			wantPage: DefaultPage, wantSize: 0, wantPaging: false,
+		},
+		{
+			name:   "blank values count as absent",
+			values: url.Values{"page": {""}, "page_size": {""}},
+			page:   lib.PInt(0), pageSize: lib.PInt(0),
+			wantPage: DefaultPage, wantSize: 0, wantPaging: false,
+		},
+		{
+			name:     "blank page only",
+			values:   url.Values{"page": {""}},
+			page:     lib.PInt(0),
+			wantPage: DefaultPage, wantSize: 0, wantPaging: false,
+		},
+		{
+			name:     "page only falls back to default page size",
+			values:   url.Values{"page": {"2"}},
+			page:     lib.PInt(2),
+			wantPage: 2, wantSize: DefaultPageSize, wantPaging: true,
+		},
+		{
+			name:     "page size only falls back to page 1",
+			values:   url.Values{"page_size": {"5"}},
+			pageSize: lib.PInt(5),
+			wantPage: DefaultPage, wantSize: 5, wantPaging: true,
+		},
+		{
+			name:     "explicit invalids are clamped",
+			values:   url.Values{"page": {"0"}},
+			page:     lib.PInt(0),
+			wantPage: DefaultPage, wantSize: DefaultPageSize, wantPaging: true,
+		},
+		{
+			name:     "page size above cap is truncated",
+			values:   url.Values{"page_size": {"101"}},
+			pageSize: lib.PInt(101),
+			wantPage: DefaultPage, wantSize: MaxPageSize, wantPaging: true,
+		},
+		{
+			name:   "explicit values kept",
+			values: url.Values{"page": {"3"}, "page_size": {"7"}},
+			page:   lib.PInt(3), pageSize: lib.PInt(7),
+			wantPage: 3, wantSize: 7, wantPaging: true,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			page, pageSize, paginated := OptionalPagination(tc.values, tc.page, tc.pageSize)
+			assert.Equal(t, tc.wantPage, page, "page")
+			assert.Equal(t, tc.wantSize, pageSize, "page_size")
+			assert.Equal(t, tc.wantPaging, paginated, "paginate")
 		})
 	}
 }
