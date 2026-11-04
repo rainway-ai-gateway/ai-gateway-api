@@ -24,6 +24,7 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/bfenetworks/bfe/bfe_basic"
 	"github.com/bfenetworks/bfe/bfe_basic/condition"
 	golibquota "github.com/bfenetworks/go-lib/quota"
 
@@ -1182,6 +1183,27 @@ func LLMConfig(c *icluster_conf.LLMConfig) error {
 		if nue.MaxBodyBytes != nil && (*nue.MaxBodyBytes < 0 || *nue.MaxBodyBytes > 4*1024*1024) {
 			return xerror.WrapParamErrorWithMsg(
 				"llm_config.normalize_upstream_error.max_body_bytes must be between 0 and 4194304")
+		}
+	}
+
+	// Validate ensure_reasoning_content; the accepted set is deliberately
+	// narrower than provider model_protocols (no gemini: its contents/parts
+	// body has no reasoning_content field), and it mirrors the bfe
+	// AIConfCheck rules so an accepted config never fails the bfe load.
+	if len(c.EnsureReasoningContent) > 0 {
+		seen := make(map[string]bool, len(c.EnsureReasoningContent))
+		for _, p := range c.EnsureReasoningContent {
+			switch p {
+			case bfe_basic.AuthStyleOpenAI, bfe_basic.AuthStyleAnthropic:
+			default:
+				return xerror.WrapParamErrorWithMsg(
+					"llm_config.ensure_reasoning_content contains unsupported protocol %q (only openai, anthropic)", p)
+			}
+			if seen[p] {
+				return xerror.WrapParamErrorWithMsg(
+					"llm_config.ensure_reasoning_content must not contain empty or duplicate entries")
+			}
+			seen[p] = true
 		}
 	}
 

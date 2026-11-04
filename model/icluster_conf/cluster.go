@@ -248,6 +248,13 @@ type LLMConfig struct {
 	KeyPolicy              *KeyPolicy              `json:"key_policy"`               // key routing policy
 	KeyAffinity            *KeyAffinity            `json:"key_affinity"`             // session-level key affinity
 	NormalizeUpstreamError *NormalizeUpstreamError `json:"normalize_upstream_error"` // upstream error normalization (unified error codes)
+	// EnsureReasoningContent lists the model access protocols for which the
+	// gateway fills an empty reasoning_content on the assistant messages that
+	// sit after the last user message (the window the upstream validates).
+	// Only "openai" and "anthropic" are accepted: gemini has no such field in
+	// its contents/parts body. Nil/empty disables the behaviour and keeps the
+	// request byte-for-byte unchanged.
+	EnsureReasoningContent []string `json:"ensure_reasoning_content"`
 	// PriceMissAction controls bfe's behavior when the (model, mode) price
 	// entry is absent (issue #1479): "fallback_chat" (bill at the model's
 	// chat-mode price, default when unset), "bill_zero" (bill 0) or "reject"
@@ -677,6 +684,27 @@ func (cm *ClusterManager) validateClusterLLMConfigAgainstProvider(llm *LLMConfig
 			}
 			if !providerKeys[*k.Name] {
 				return xerror.WrapParamErrorWithMsg("key %s not found in provider %s", *k.Name, provider.Name)
+			}
+		}
+	}
+
+	// EnsureReasoningContent only makes sense for protocols the provider
+	// actually serves. An empty provider model_protocols means ["openai"],
+	// mirroring bfe's modelprotocol.Supports so an accepted config never fails
+	// the bfe load.
+	if len(llm.EnsureReasoningContent) > 0 {
+		providerProtocols := map[string]bool{}
+		for _, p := range provider.ModelProtocols {
+			providerProtocols[p] = true
+		}
+		if len(providerProtocols) == 0 {
+			providerProtocols["openai"] = true
+		}
+		for _, p := range llm.EnsureReasoningContent {
+			if !providerProtocols[p] {
+				return xerror.WrapParamErrorWithMsg(
+					"ensure_reasoning_content %q not supported by provider %s (model_protocols=%v)",
+					p, provider.Name, provider.ModelProtocols)
 			}
 		}
 	}
@@ -1137,6 +1165,47 @@ func (cm *ClusterManager) ProviderModelRefChecker(ctx context.Context,
 				return xerror.WrapConflictErrorWithMsg(
 					"provider %s model %s is referenced by cluster %s",
 					newProvider.Name, m, cluster.Name)
+			}
+		}
+	}
+
+	return nil
+}
+
+// ProviderProtocolRefChecker rejects a model_protocols narrowing that would
+// leave a referencing cluster's ensure_reasoning_content invalid: bfe's
+// AIConfCheck requires every entry to be declared by ModelProtocols, and an
+// invalid export makes the whole cluster_conf topic fail to reload (bfe keeps
+// the previous configuration while conf-agent keeps alerting).
+func (cm *ClusterManager) ProviderProtocolRefChecker(ctx context.Context,
+	oldProvider, newProvider *iprovider.Provider) error {
+
+	if newProvider == nil {
+		return nil
+	}
+
+	declared := make(map[string]bool, len(newProvider.ModelProtocols))
+	for _, p := range newProvider.ModelProtocols {
+		declared[p] = true
+	}
+
+	clusters, err := cm.storager.FetchClusterList(ctx, nil)
+	if err != nil {
+		return err
+	}
+
+	for _, cluster := range clusters {
+		if cluster.LLMConfig == nil || cluster.LLMConfig.Provider == nil {
+			continue
+		}
+		if *cluster.LLMConfig.Provider != newProvider.Name {
+			continue
+		}
+		for _, p := range cluster.LLMConfig.EnsureReasoningContent {
+			if !declared[p] {
+				return xerror.WrapConflictErrorWithMsg(
+					"provider %s model_protocols %s is referenced by cluster %s ensure_reasoning_content",
+					newProvider.Name, p, cluster.Name)
 			}
 		}
 	}
@@ -1649,6 +1718,9 @@ func newAIConf(llmConfig *LLMConfig, modelTable *cluster_conf.ModelTable,
 			RedactSecrets: llmConfig.NormalizeUpstreamError.RedactSecrets,
 		}
 	}
+	// nil passthrough: the key stays absent from the export, and the zero
+	// value on the bfe side means "disabled".
+	aiConf.EnsureReasoningContent = llmConfig.EnsureReasoningContent
 
 	return aiConf
 }

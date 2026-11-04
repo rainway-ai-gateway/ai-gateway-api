@@ -126,7 +126,7 @@ innerapi/
 | IN-1-001 | 首次导出 TLS/Server 配置 | 正常参数 | 返回完整配置与 version |
 | IN-1-002 | 导出 ClusterConf 含多 Key AIConf | 返回数据 | 验证 ClusterConf.AIConf.Keys/KeyPolicy 与 OpenAPI 写入一致 |
 | IN-1-003 | 导出 ClusterConf 含模型定价表 | 返回数据 | 验证 ClusterConf.AIConf.ModelTable 与导入的 model prices 一致 |
-| IN-1-004 | 导出 ClusterConf 含 ModelProtocols（对应 IN-TLS-1-007） | 返回数据 | 验证 ClusterConf.AIConf.ModelProtocols 与 OpenAPI 写入一致 |
+| ~~IN-1-004~~ | ~~导出 ClusterConf 含 ModelProtocols~~ | 返回数据 | **编号合并**：同一断言已由 `IN-TLS-1-007` 实现（含 provider 更新后的导出收敛），本编号不再单独实现 |
 | IN-TLS-1-009 | 同秒连续变更导出版本严格递增 | 并发语义 | create→export→delete→export 连续 6 轮，版本串严格递增；携带旧版本拉取返回新内容（fixes #142，版本楔死回归锚点） |
 | IN-TIER-1-001 | 导出 ClusterConf 含分时段定价 | 返回数据 | 验证 ModelTable 携带 TimeZone/Tiers 与 ModelPrice 的 TierPrices |
 | IN-TIER-1-002 | 未配置时段规则时导出固定价格 | 返回数据 | 验证 ModelTable.Tiers 为空，仍按默认 Prices 导出 |
@@ -266,40 +266,17 @@ innerapi/
 
 ---
 
-#### 6.4.4 IN-1-004：导出 ClusterConf 含 ModelProtocols（返回数据，对应 IN-TLS-1-007）
+#### 6.4.4 IN-1-004：导出 ClusterConf 含 ModelProtocols（**已合并至 IN-TLS-1-007**）
 
-##### 设计思路
+本编号与 `IN-TLS-1-007`（`AIConf 包含 ModelProtocols`）的验证目标是同一个：Provider 写入的
+`model_protocols` 经导出落到 `ClusterConf.Config.{cluster_name}.AIConf.ModelProtocols`。为避免同一断言
+两处维护，`IN-1-004` 不再单独实现，改为在 `IN-TLS-1-007` 中覆盖，并在此基础上补充了**变更传播**断言：
 
-验证通过 OpenAPI 创建的 Provider（含 `model_protocols=["anthropic"]`）经 InnerAPI `/configs/tls_conf/server_data_conf` 导出后，`ClusterConf.Config.{cluster_name}.AIConf` 中正确输出 `ModelProtocols`。
+1. Provider 初始 `model_protocols=["anthropic"]` → 导出 `AIConf.ModelProtocols == ["anthropic"]`；
+2. PATCH 该 Provider 放宽为 `["openai","anthropic"]` → **再次导出**断言 `ModelProtocols == ["openai","anthropic"]`。
 
-##### 前提数据准备
-
-1. 通过 POST `/open-api/v1/providers` 创建 Provider，设置 `model_protocols=["anthropic"]`。
-2. 通过 POST `/open-api/v1/clusters` 创建集群 `cluster_inner_model_protocols`，其 `llm_config.provider` 指向上述 Provider。
-
-##### 执行步骤
-
-1. 发送 GET 请求到 `/inner-api/v1/configs/tls_conf/server_data_conf`。
-2. 在返回的 `Data.ClusterConf.Config` 中找到目标集群。
-3. 校验该集群的 `AIConf.ModelProtocols` 与 Provider 写入一致。
-
-##### 请求参数
-
-无
-
-##### 预期返回结果
-
-**ErrNum**：200  
-**ErrMsg**：success
-
-**Data 字段校验**：
-
-| 字段 | 预期值 | 校验方式 |
-|------|--------|---------|
-| Data.ClusterConf.Config.cluster_inner_model_protocols.AIConf.ModelProtocols | 长度为 1 | Len=1 |
-| Data.ClusterConf.Config.cluster_inner_model_protocols.AIConf.ModelProtocols[0] | "anthropic" | Equals |
-
----
+第 2 步是本次补强的部分：它证明导出是**读时解析 provider 记录**，而不是创建集群时的快照——若哪天
+`ModelProtocols` 被改成落库快照，该断言会立刻失败（检查项 #5 变更传播）。
 
 ### 6.4.5 IN-TLS-1-009：同秒连续变更导出版本严格递增（并发语义）
 
@@ -1342,7 +1319,28 @@ IN-EPP-003 中 `flow_control` 写入 `{"max_requests": 200, "queue_ttl": 45, "no
   下钻 `ClusterConf.Config.<cluster>.AIConf`；
 - 数值断言对反序列化值（MaxBodyBytes 无精度风险，int64 直比）。
 
-## 20. 注意事项
+## 20. EnsureReasoningContent 导出用例（2026-11-03 思考模式推理内容补齐）
+
+### 20.1 测试场景总览
+
+| 编号 | 验证点 | 检查项 |
+|------|--------|--------|
+| IN-ERC-1-001 | 配置 `ensure_reasoning_content=["openai","anthropic"]` → 导出 `AIConf.EnsureReasoningContent` 精确等于该数组（PascalCase 键）；snake_case 键不得出现 | #8 导出存在性 + 取值 + 映射方向 |
+| IN-ERC-1-002 | 单协议 `["openai"]` 导出一致 | #8 |
+| IN-ERC-1-003 | 未配置集群：键存在且为 `null`（导出结构体不带 `omitempty`，bfe 反序列化为 nil = 关闭） | 缺省语义（与 §19 NormalizeUpstreamError 同口径） |
+
+### 20.2 设计要点
+
+- 合同依据：`design-docs/api-define/InnerAPI接口定义/server-data-conf.md` 的 `AIConf.EnsureReasoningContent` 行，
+  以及 `modifications/2026-11-03-cluster-reasoning-content-protocols/`；
+- **snake_case 不泄漏**是本组用例的核心断言之一：OpenAPI 侧字段名是 `ensure_reasoning_content`，导出侧必须是
+  `EnsureReasoningContent`；映射漏写时 bfe 会当成"未配置"静默关闭，只有这条断言能发现；
+- **null 语义**：导出结构体不带 `omitempty`，未配置时键存在且为 `null`，与 `NormalizeUpstreamError` 实测一致；
+  该断言同时防止后续加 `omitempty` 悄悄改变契约（bfe 侧虽等价，但契约变化需显式决策）；
+- 集群 CRUD 侧的字段校验/回读/防泄漏覆盖在 `tests/clusters/`（CL-1-201~207、CL-4-201~206）；本目录只锁导出契约，
+  两者按"写入语义"与"导出契约"分工，不重复。
+
+## 21. 注意事项
 
 1. InnerAPI 返回值仍包含 `WorkMode`（与 OpenAPI v0.3.0 不同，InnerAPI 未移除该字段）。
 2. 配置未变化时 `Data=null`，不要断言为空对象 `{}`。

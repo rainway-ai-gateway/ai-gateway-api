@@ -31,6 +31,7 @@ require (
 	filippo.io/edwards25519 v1.1.0 // indirect
 	github.com/ClickHouse/ch-go v0.67.0 // indirect
 	github.com/andybalholm/brotli v1.2.0 // indirect
+	github.com/expr-lang/expr v1.17.8 // indirect
 	github.com/go-faster/city v1.0.1 // indirect
 	github.com/go-faster/errors v0.7.1 // indirect
 	github.com/klauspost/compress v1.18.0 // indirect
@@ -67,7 +68,6 @@ require (
 	github.com/tidwall/match v1.1.1 // indirect
 	github.com/tidwall/pretty v1.2.0 // indirect
 	github.com/tidwall/sjson v1.2.5 // indirect
-	github.com/tjfoc/gmsm v1.3.2 // indirect
 	github.com/zmap/go-iptree v0.0.0-20170831022036-1948b1097e25 // indirect
 	golang.org/x/crypto v0.45.0
 	golang.org/x/sys v0.38.0 // indirect
@@ -80,4 +80,13 @@ require (
 	modernc.org/sqlite v1.23.1 // indirect
 )
 
-// 本地联调时可临时切换：replace github.com/bfenetworks/bfe => ../bfe
+// TODO(dep-bump): 临时依赖。bfe 上游未发布含 AIConf.EnsureReasoningContent 的版本，
+// 这里 replace 到开发分支 v1.9.0-dev 的提交 3b5d05a6（该提交同时下线了 bfe_tls，
+// 故需配合 model/iprotocol 的 crypto/tls 适配）。
+// fork 保留了原 module path（github.com/bfenetworks/bfe），因此 replace 合法；
+// 伪版本基线按 fork 上可达的最高 tag（v1.4.0）计算。
+// 本地联调如需切换：改为 replace github.com/bfenetworks/bfe => ../bfe。
+// 上游发布对应版本后：删除本行，并把 require 的 bfe 版本 bump 到该版本
+// （届时 go mod tidy 会自动补 expr-lang/expr、移除 tjfoc/gmsm）。
+
+replace github.com/bfenetworks/bfe => github.com/mileszhang2016/bfe v1.4.1-0.20261103140728-3b5d05a68931

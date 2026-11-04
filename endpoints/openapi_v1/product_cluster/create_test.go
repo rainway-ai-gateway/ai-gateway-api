@@ -238,6 +238,25 @@ func TestNormalizeLLMConfig(t *testing.T) {
 		assert.Equal(t, false, *got.NormalizeUpstreamError.RedactSecrets)
 	})
 
+	t.Run("copies ensure_reasoning_content", func(t *testing.T) {
+		in := &icluster_conf.LLMConfig{
+			Models:                 []string{"deepseek-chat"},
+			EnsureReasoningContent: []string{"openai", "anthropic"},
+		}
+		got := normalizeLLMConfig(in)
+		require.NotNil(t, got)
+		assert.Equal(t, []string{"openai", "anthropic"}, got.EnsureReasoningContent)
+	})
+
+	t.Run("ensure_reasoning_content nil stays nil (BFE zero value = disabled)", func(t *testing.T) {
+		in := &icluster_conf.LLMConfig{
+			Models: []string{"deepseek-chat"},
+		}
+		got := normalizeLLMConfig(in)
+		require.NotNil(t, got)
+		assert.Nil(t, got.EnsureReasoningContent)
+	})
+
 	t.Run("normalize_upstream_error nil stays nil (BFE Effective applies defaults)", func(t *testing.T) {
 		in := &icluster_conf.LLMConfig{
 			Models: []string{"gpt-4"},

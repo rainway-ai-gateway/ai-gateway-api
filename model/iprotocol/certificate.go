@@ -16,12 +16,12 @@ package iprotocol
 
 import (
 	"context"
+	"crypto/tls"
 	"crypto/x509"
 	"encoding/pem"
 	"strings"
 	"time"
 
-	"github.com/bfenetworks/bfe/bfe_tls"
 	"github.com/rainway-ai-gateway/ai-gateway-api/lib"
 	"github.com/rainway-ai-gateway/ai-gateway-api/lib/xerror"
 	"github.com/rainway-ai-gateway/ai-gateway-api/model/ibasic"
@@ -171,7 +171,9 @@ func validateCertPair(certFileContent string, keyFileContent string) error {
 	}
 
 	checkCertKeyPair := func(certPEMBlock, keyPEMBlock []byte) error {
-		_, err := bfe_tls.X509KeyPair(certPEMBlock, keyPEMBlock)
+		// crypto/tls is the same implementation the data plane now uses to
+		// load certificates, so an accepted pair is also loadable by bfe.
+		_, err := tls.X509KeyPair(certPEMBlock, keyPEMBlock)
 		return err
 	}
 
