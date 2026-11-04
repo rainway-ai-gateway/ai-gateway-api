@@ -1217,3 +1217,105 @@ func mustReadEnsure(t *testing.T, read func(*testing.T, string) (interface{}, bo
 	}
 	return v
 }
+
+// TestClusters_Create_KeyPenaltyTTL covers the control-plane contract of issue
+// #1448: explicit penalty TTLs are stored and echoed back, omitted subfields are
+// filled with 60/300, and out-of-range values (including 0) are rejected with
+// 422 — 0 is not a way to disable the penalty, because the data plane treats
+// Redis expire=0 as "never expire".
+func TestClusters_Create_KeyPenaltyTTL(t *testing.T) {
+	provider := testutil.UniqueProviderName()
+	if _, err := testutil.CreateProvider(provider, map[string]interface{}{
+		"models": []string{"deepseek-chat"},
+	}); err != nil {
+		t.Fatalf("setup provider failed: %v", err)
+	}
+
+	createBody := func(name string, affinity map[string]interface{}) map[string]interface{} {
+		return map[string]interface{}{
+			"name": name,
+			"llm_config": map[string]interface{}{
+				"models":       []string{"deepseek-chat"},
+				"key_affinity": affinity,
+				"provider":     provider,
+			},
+		}
+	}
+
+	t.Run("显式值落库并回读", func(t *testing.T) {
+		name := testutil.UniqueClusterName()
+		resp, err := testutil.GetClient().Post("/open-api/v1/clusters", createBody(name, map[string]interface{}{
+			"enabled":          true,
+			"penalty_ttl_429":  30,
+			"penalty_ttl_auth": 120,
+		}))
+		if err != nil {
+			t.Fatalf("request failed: %v", err)
+		}
+		testutil.AssertSuccess(t, resp)
+		defer testutil.DeleteCluster(name)
+
+		assertClusterPenaltyTTL(t, name, 30, 120)
+	})
+
+	t.Run("缺省子字段补默认 60/300", func(t *testing.T) {
+		name := testutil.UniqueClusterName()
+		resp, err := testutil.GetClient().Post("/open-api/v1/clusters", createBody(name, map[string]interface{}{
+			"enabled": true,
+		}))
+		if err != nil {
+			t.Fatalf("request failed: %v", err)
+		}
+		testutil.AssertSuccess(t, resp)
+		defer testutil.DeleteCluster(name)
+
+		assertClusterPenaltyTTL(t, name, 60, 300)
+	})
+
+	t.Run("非法值 422", func(t *testing.T) {
+		cases := []struct {
+			field string
+			value int
+		}{
+			{"penalty_ttl_429", -1},
+			{"penalty_ttl_429", 0},
+			{"penalty_ttl_429", 9},
+			{"penalty_ttl_429", 601},
+			{"penalty_ttl_auth", -1},
+			{"penalty_ttl_auth", 0},
+			{"penalty_ttl_auth", 59},
+			{"penalty_ttl_auth", 1801},
+		}
+		for _, c := range cases {
+			resp, err := testutil.GetClient().Post("/open-api/v1/clusters", createBody(
+				testutil.UniqueClusterName(),
+				map[string]interface{}{c.field: c.value},
+			))
+			if err != nil {
+				t.Fatalf("%s=%d: request failed: %v", c.field, c.value, err)
+			}
+			assert.Equal(t, 422, resp.ErrNum, "%s=%d should be rejected, got %d %s",
+				c.field, c.value, resp.ErrNum, resp.ErrMsg)
+		}
+	})
+}
+
+// assertClusterPenaltyTTL reads the cluster back and checks both penalty TTLs.
+func assertClusterPenaltyTTL(t *testing.T, name string, want429, wantAuth int) {
+	t.Helper()
+
+	resp, err := testutil.GetClient().Get("/open-api/v1/clusters/" + name)
+	if err != nil {
+		t.Fatalf("read back failed: %v", err)
+	}
+	testutil.AssertSuccess(t, resp)
+
+	var data map[string]interface{}
+	if err := json.Unmarshal(resp.Data, &data); err != nil {
+		t.Fatalf("unmarshal failed: %v", err)
+	}
+	llm, _ := data["llm_config"].(map[string]interface{})
+	affinity, _ := llm["key_affinity"].(map[string]interface{})
+	assert.Equal(t, float64(want429), affinity["penalty_ttl_429"])
+	assert.Equal(t, float64(wantAuth), affinity["penalty_ttl_auth"])
+}

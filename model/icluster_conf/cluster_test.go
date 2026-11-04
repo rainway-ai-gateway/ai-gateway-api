@@ -457,10 +457,12 @@ func newTestClusterLLM() *Cluster {
 			RetryBackoffMax:     lib.PInt(5000),
 		},
 		KeyAffinity: &KeyAffinity{
-			Enabled:       lib.PBool(true),
-			TTL:           lib.PInt(600),
-			RedisPrefix:   lib.PString("bfe:ai:key_affinity"),
-			PenaltyEnable: lib.PBool(true),
+			Enabled:        lib.PBool(true),
+			TTL:            lib.PInt(600),
+			RedisPrefix:    lib.PString("bfe:ai:key_affinity"),
+			PenaltyEnable:  lib.PBool(true),
+			PenaltyTTL429:  lib.PInt(30),
+			PenaltyTTLAuth: lib.PInt(120),
 		},
 		NormalizeUpstreamError: &NormalizeUpstreamError{
 			Enabled:            lib.PBool(true),
@@ -1426,6 +1428,8 @@ func TestNewBfeClusterConf(t *testing.T) {
 		assert.Equal(t, 600, cConf.AIConf.KeyPolicy.SessionAffinityTTL)
 		assert.Equal(t, "bfe:ai:key_affinity", cConf.AIConf.KeyPolicy.SessionAffinityRedisPrefix)
 		assert.True(t, cConf.AIConf.KeyPolicy.SessionAffinityPenaltyEnable)
+		assert.Equal(t, 30, cConf.AIConf.KeyPolicy.SessionAffinityPenaltyTTL429)
+		assert.Equal(t, 120, cConf.AIConf.KeyPolicy.SessionAffinityPenaltyTTLAuth)
 		require.NotNil(t, cConf.AIConf.ModelMapping)
 		assert.Equal(t, "new", (*cConf.AIConf.ModelMapping)["old"])
 		assert.Equal(t, "openrouter/", cConf.AIConf.MatchPrefix)
@@ -1439,6 +1443,32 @@ func TestNewBfeClusterConf(t *testing.T) {
 		assert.Equal(t, int64(65536), cConf.AIConf.NormalizeUpstreamError.MaxBodyBytes)
 		require.NotNil(t, cConf.AIConf.NormalizeUpstreamError.RedactSecrets)
 		assert.True(t, *cConf.AIConf.NormalizeUpstreamError.RedactSecrets)
+	})
+
+	t.Run("LLM config without key_affinity exports penalty defaults", func(t *testing.T) {
+		providerKeyTable := map[string][]iprovider.ProviderKey{
+			"openai": {
+				{Name: "key-primary", Key: "sk-aaaaaaaaaaaa"},
+				{Name: "key-secondary", Key: "sk-bbbbbbbbbbbb"},
+			},
+		}
+		providerProtocolTable := map[string][]string{
+			"openai": {"openai"},
+		}
+		cluster := newTestClusterLLM()
+		cluster.LLMConfig.KeyAffinity = nil
+
+		conf, err := NewBfeClusterConf(context.Background(), "v1", []*Cluster{cluster}, nil,
+			providerKeyTable, providerProtocolTable, nil, nil, nil)
+		assert.NoError(t, err)
+		cConf := (*conf.Config)["c1"]
+		require.NotNil(t, cConf.AIConf)
+		require.NotNil(t, cConf.AIConf.KeyPolicy)
+		// A cluster stored before issue #1448 has no key_affinity: the export
+		// must still carry concrete defaults, never 0 (Redis expire=0 means
+		// "never expire").
+		assert.Equal(t, 60, cConf.AIConf.KeyPolicy.SessionAffinityPenaltyTTL429)
+		assert.Equal(t, 300, cConf.AIConf.KeyPolicy.SessionAffinityPenaltyTTLAuth)
 	})
 
 	t.Run("LLM config with tiered pricing", func(t *testing.T) {

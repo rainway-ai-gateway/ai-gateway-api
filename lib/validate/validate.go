@@ -1158,6 +1158,17 @@ func LLMConfig(c *icluster_conf.LLMConfig) error {
 		if c.KeyAffinity.RedisPrefix != nil && *c.KeyAffinity.RedisPrefix == "" {
 			return xerror.WrapParamErrorWithMsg("llm_config.key_affinity.redis_prefix must not be empty")
 		}
+		// issue #1448: both ranges exclude 0 on purpose. An unset field is nil
+		// and filled with the default; 0 is not a way to disable the penalty,
+		// because Redis treats expire=0 as "never expire".
+		if c.KeyAffinity.PenaltyTTL429 != nil &&
+			(*c.KeyAffinity.PenaltyTTL429 < 10 || *c.KeyAffinity.PenaltyTTL429 > 600) {
+			return xerror.WrapParamErrorWithMsg("llm_config.key_affinity.penalty_ttl_429 must be between 10 and 600")
+		}
+		if c.KeyAffinity.PenaltyTTLAuth != nil &&
+			(*c.KeyAffinity.PenaltyTTLAuth < 60 || *c.KeyAffinity.PenaltyTTLAuth > 1800) {
+			return xerror.WrapParamErrorWithMsg("llm_config.key_affinity.penalty_ttl_auth must be between 60 and 1800")
+		}
 	}
 
 	// Validate price_miss_action (issue #1479); the rules mirror the BFE

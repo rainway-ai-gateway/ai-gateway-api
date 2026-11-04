@@ -202,10 +202,12 @@ func TestNormalizeLLMConfig(t *testing.T) {
 		in := &icluster_conf.LLMConfig{
 			Models: []string{"gpt-4"},
 			KeyAffinity: &icluster_conf.KeyAffinity{
-				Enabled:       lib.PBool(true),
-				TTL:           lib.PInt(600),
-				RedisPrefix:   lib.PString("bfe:ai:key_affinity"),
-				PenaltyEnable: lib.PBool(true),
+				Enabled:        lib.PBool(true),
+				TTL:            lib.PInt(600),
+				RedisPrefix:    lib.PString("bfe:ai:key_affinity"),
+				PenaltyEnable:  lib.PBool(true),
+				PenaltyTTL429:  lib.PInt(30),
+				PenaltyTTLAuth: lib.PInt(120),
 			},
 		}
 		got := normalizeLLMConfig(in)
@@ -215,6 +217,8 @@ func TestNormalizeLLMConfig(t *testing.T) {
 		assert.Equal(t, 600, *got.KeyAffinity.TTL)
 		assert.Equal(t, "bfe:ai:key_affinity", *got.KeyAffinity.RedisPrefix)
 		assert.Equal(t, true, *got.KeyAffinity.PenaltyEnable)
+		assert.Equal(t, 30, *got.KeyAffinity.PenaltyTTL429)
+		assert.Equal(t, 120, *got.KeyAffinity.PenaltyTTLAuth)
 	})
 
 	t.Run("copies normalize_upstream_error (no default synthesis)", func(t *testing.T) {
@@ -278,6 +282,8 @@ func TestNormalizeLLMConfig(t *testing.T) {
 		assert.Equal(t, 600, *got.KeyAffinity.TTL)
 		assert.Equal(t, "bfe:ai:key_affinity", *got.KeyAffinity.RedisPrefix)
 		assert.Equal(t, true, *got.KeyAffinity.PenaltyEnable)
+		assert.Equal(t, 60, *got.KeyAffinity.PenaltyTTL429)
+		assert.Equal(t, 300, *got.KeyAffinity.PenaltyTTLAuth)
 	})
 
 	t.Run("key_affinity fills defaults when nil", func(t *testing.T) {
@@ -291,6 +297,8 @@ func TestNormalizeLLMConfig(t *testing.T) {
 		assert.Equal(t, 600, *got.KeyAffinity.TTL)
 		assert.Equal(t, "bfe:ai:key_affinity", *got.KeyAffinity.RedisPrefix)
 		assert.Equal(t, true, *got.KeyAffinity.PenaltyEnable)
+		assert.Equal(t, 60, *got.KeyAffinity.PenaltyTTL429)
+		assert.Equal(t, 300, *got.KeyAffinity.PenaltyTTLAuth)
 	})
 }
 

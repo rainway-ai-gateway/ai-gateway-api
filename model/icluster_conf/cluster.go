@@ -225,6 +225,12 @@ type KeyAffinity struct {
 	TTL           *int    `json:"ttl"`            // idle timeout in seconds, default 600
 	RedisPrefix   *string `json:"redis_prefix"`   // default "bfe:ai:key_affinity"
 	PenaltyEnable *bool   `json:"penalty_enable"` // default true
+	// Penalty TTL (seconds) written when an upstream key becomes unusable.
+	// nil means "unset" and is filled with the default; an explicit value out of
+	// range is rejected by validation. 0 is NOT "disabled" (Redis treats
+	// expire=0 as "never expire").
+	PenaltyTTL429  *int `json:"penalty_ttl_429"`  // upstream 429, default 60
+	PenaltyTTLAuth *int `json:"penalty_ttl_auth"` // upstream 401/402/403, default 300
 }
 
 // NormalizeUpstreamError configures upstream error normalization (unified
@@ -1691,6 +1697,9 @@ func newAIConf(llmConfig *LLMConfig, modelTable *cluster_conf.ModelTable,
 		SessionAffinityTTL:           600,
 		SessionAffinityRedisPrefix:   "bfe:ai:key_affinity",
 		SessionAffinityPenaltyEnable: true,
+		// Keep in sync with AIKeyPolicyCheck defaults on the data plane.
+		SessionAffinityPenaltyTTL429:  60,
+		SessionAffinityPenaltyTTLAuth: 300,
 	}
 	if llmConfig.KeyPolicy != nil {
 		aiConf.KeyPolicy.Strategy = derefString(llmConfig.KeyPolicy.Strategy, "weighted_random")
@@ -1703,6 +1712,8 @@ func newAIConf(llmConfig *LLMConfig, modelTable *cluster_conf.ModelTable,
 		aiConf.KeyPolicy.SessionAffinityTTL = derefInt(llmConfig.KeyAffinity.TTL, 600)
 		aiConf.KeyPolicy.SessionAffinityRedisPrefix = derefString(llmConfig.KeyAffinity.RedisPrefix, "bfe:ai:key_affinity")
 		aiConf.KeyPolicy.SessionAffinityPenaltyEnable = derefBool(llmConfig.KeyAffinity.PenaltyEnable, true)
+		aiConf.KeyPolicy.SessionAffinityPenaltyTTL429 = derefInt(llmConfig.KeyAffinity.PenaltyTTL429, 60)
+		aiConf.KeyPolicy.SessionAffinityPenaltyTTLAuth = derefInt(llmConfig.KeyAffinity.PenaltyTTLAuth, 300)
 	}
 	// issue #1479: empty string keeps the field unset on the bfe side
 	// (AIConfCheck normalizes empty to the fallback_chat default).

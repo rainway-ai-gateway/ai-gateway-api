@@ -524,12 +524,38 @@ func TestLLMConfig(t *testing.T) {
 	// valid key_affinity
 	c11 := *c
 	c11.KeyAffinity = &icluster_conf.KeyAffinity{
-		Enabled:       lib.PBool(true),
-		TTL:           lib.PInt(600),
-		RedisPrefix:   lib.PString("bfe:ai:key_affinity"),
-		PenaltyEnable: lib.PBool(true),
+		Enabled:        lib.PBool(true),
+		TTL:            lib.PInt(600),
+		RedisPrefix:    lib.PString("bfe:ai:key_affinity"),
+		PenaltyEnable:  lib.PBool(true),
+		PenaltyTTL429:  lib.PInt(60),
+		PenaltyTTLAuth: lib.PInt(300),
 	}
 	assert.NoError(t, LLMConfig(&c11))
+
+	// issue #1448: penalty TTL boundaries (429: [10,600], auth: [60,1800]).
+	// nil means "unset" and passes; 0/negative/out-of-range are rejected.
+	assert.NoError(t, LLMConfig(c))
+	for _, ttl := range []int{10, 600} {
+		cc := *c
+		cc.KeyAffinity = &icluster_conf.KeyAffinity{PenaltyTTL429: lib.PInt(ttl)}
+		assert.NoError(t, LLMConfig(&cc), "penalty_ttl_429=%d", ttl)
+	}
+	for _, ttl := range []int{-1, 0, 9, 601} {
+		cc := *c
+		cc.KeyAffinity = &icluster_conf.KeyAffinity{PenaltyTTL429: lib.PInt(ttl)}
+		assert.Error(t, LLMConfig(&cc), "penalty_ttl_429=%d", ttl)
+	}
+	for _, ttl := range []int{60, 1800} {
+		cc := *c
+		cc.KeyAffinity = &icluster_conf.KeyAffinity{PenaltyTTLAuth: lib.PInt(ttl)}
+		assert.NoError(t, LLMConfig(&cc), "penalty_ttl_auth=%d", ttl)
+	}
+	for _, ttl := range []int{-1, 0, 59, 1801} {
+		cc := *c
+		cc.KeyAffinity = &icluster_conf.KeyAffinity{PenaltyTTLAuth: lib.PInt(ttl)}
+		assert.Error(t, LLMConfig(&cc), "penalty_ttl_auth=%d", ttl)
+	}
 
 	// invalid key_affinity.ttl
 	c12 := *c
