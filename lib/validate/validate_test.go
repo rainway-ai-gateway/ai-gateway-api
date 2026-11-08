@@ -232,6 +232,32 @@ func TestDescription(t *testing.T) {
 	})
 }
 
+func TestDescriptionRange(t *testing.T) {
+	// certificates.md §1/§2.1: description 必填、长度 2-256 字节（按 UTF-8
+	// 字节计）。下限与上限都按字节计（issue #310）：单个汉字 1 字符/3 字节
+	// 是合法的，单个 ASCII 字符 1 字节不满足下限。
+	t.Run("byte boundaries 2/256", func(t *testing.T) {
+		assert.Error(t, DescriptionRange("a", 2, MaxCertificateDescriptionLength, "description"))
+		assert.NoError(t, DescriptionRange("ab", 2, MaxCertificateDescriptionLength, "description"))
+		assert.NoError(t, DescriptionRange(strings.Repeat("a", 256), 2, MaxCertificateDescriptionLength, "description"))
+		assert.Error(t, DescriptionRange(strings.Repeat("a", 257), 2, MaxCertificateDescriptionLength, "description"))
+	})
+
+	t.Run("single multibyte character passes the lower bound", func(t *testing.T) {
+		assert.NoError(t, DescriptionRange("汉", 2, MaxCertificateDescriptionLength, "description"))
+	})
+
+	t.Run("control characters are rejected within range", func(t *testing.T) {
+		assert.Error(t, DescriptionRange("ab\x01cd", 2, MaxCertificateDescriptionLength, "description"))
+	})
+
+	t.Run("error message names the unit and the bounds", func(t *testing.T) {
+		err := DescriptionRange("a", 2, MaxCertificateDescriptionLength, "description")
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "between 2 and 256 bytes")
+	})
+}
+
 func TestAPIKeyValue(t *testing.T) {
 	assert.NoError(t, APIKeyValue("ak-123_test"))
 	assert.Error(t, APIKeyValue(""))

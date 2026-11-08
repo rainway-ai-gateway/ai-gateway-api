@@ -369,6 +369,18 @@ func Description(s string, maxLen int, name string) error {
 	return NoControlChars(s)
 }
 
+// DescriptionRange validates a description string whose byte length must fall
+// within [minLen, maxLen] (UTF-8 bytes) and contain no control characters.
+// Use this instead of pairing Description with a validator `min` struct tag:
+// go-playground/validator counts `min` in runes, which disagrees with the
+// byte-based wording of certificates.md §1/§2.1 (issue #310).
+func DescriptionRange(s string, minLen, maxLen int, name string) error {
+	if len(s) < minLen || len(s) > maxLen {
+		return xerror.WrapParamErrorWithMsg("%s length must be between %d and %d bytes", name, minLen, maxLen)
+	}
+	return NoControlChars(s)
+}
+
 // APIKeyDescription validates API-Key description.
 func APIKeyDescription(s string) error {
 	if len(s) == 0 {
