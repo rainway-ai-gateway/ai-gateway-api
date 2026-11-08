@@ -56,6 +56,8 @@ API-Key 通过 `api_keys.entity_id` 字段与 Entity 关联；Entity 通过 `ent
 
 即：层级只能从高级别指向低级别，不能同级或反向。
 
+**Entity-Type 侧的层级守卫**（issue #313）：`PATCH /entity-types/{type_name}` 修改 `level` 时，模型层在落库前全量复查该类型下已有 Entity 的存量父子关系（作为子级：父类型 level 必须小于新值；作为父级：子类型 level 必须大于新值），任一处冲突即返回 409 拒绝且不做任何修改；越界值（非 1-5）返回 422。`level` 取值不变或仅改 `description` 时不触发复查。
+
 ### 3.4 不可变字段
 
 `type` 在 Entity 创建后固定，更新接口（PUT/PATCH）不得改写：

@@ -302,7 +302,8 @@ func Init() error {
 
 	container.EntityTypeManager = entity.NewEntityTypeManager(
 		container.TxnStoragerSingleton,
-		container.EntityTypeStorager)
+		container.EntityTypeStorager,
+		container.EntityStorager)
 	container.EntityTypeManager.SetOperationLogManager(container.OperationLogManager)
 
 	container.EntityManager = entity.NewEntityManager(
