@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/rainway-ai-gateway/ai-gateway-api/integration/testutil"
@@ -237,6 +238,77 @@ func TestModelPrice_Create(t *testing.T) {
 		if resp.ErrNum != 422 && resp.ErrNum != 500 {
 			t.Errorf("expected ErrNum=422 or 500, got ErrNum=%d, ErrMsg=%s", resp.ErrNum, resp.ErrMsg)
 		}
+	})
+
+	t.Run("MP-2-007 provider/model/base_model 超长拒绝且不落库", func(t *testing.T) {
+		// issue #309：契约要求三字段长度 1-255，超长必须 422 且不落库
+		base := func() map[string]interface{} {
+			return map[string]interface{}{
+				"provider":   testutil.UniqueName("provider"),
+				"model":      testutil.UniqueName("model"),
+				"base_model": testutil.UniqueName("model"),
+				"mode":       "chat",
+				"prices": map[string]interface{}{
+					"input_cost_per_token": 0.001,
+				},
+			}
+		}
+		long := strings.Repeat("a", 256)
+		for field, mutate := range map[string]func(map[string]interface{}){
+			"provider":   func(b map[string]interface{}) { b["provider"] = long },
+			"model":      func(b map[string]interface{}) { b["model"] = long },
+			"base_model": func(b map[string]interface{}) { b["base_model"] = long },
+		} {
+			body := base()
+			mutate(body)
+			resp, err := testutil.GetClient().Post("/open-api/v1/model-prices", body)
+			if err != nil {
+				t.Fatalf("request failed: %v", err)
+			}
+			testutil.AssertErrCode(t, resp, 422)
+
+			// 修复前超长输入会进入存储层（严格模式 500 / 非严格截断落库），
+			// 这里钉死：按 provider 过滤列表必须为空。
+			listResp, err := testutil.GetClient().Get("/open-api/v1/model-prices", map[string]string{
+				"provider": body["provider"].(string),
+			})
+			if err != nil {
+				t.Fatalf("list failed: %v", err)
+			}
+			testutil.AssertSuccess(t, listResp)
+			var list map[string]interface{}
+			if err := json.Unmarshal(listResp.Data, &list); err != nil {
+				t.Fatalf("unmarshal list: %v", err)
+			}
+			pagination := list["pagination"].(map[string]interface{})
+			assert.Equal(t, float64(0), pagination["total"], "field %s: overlong record must not be persisted", field)
+		}
+	})
+
+	t.Run("MP-2-008 255 字符边界创建成功", func(t *testing.T) {
+		provider := testutil.UniqueName("provider")
+		model := strings.Repeat("m", 255)
+
+		id, err := testutil.CreateModelPrice(map[string]interface{}{
+			"provider":   provider,
+			"model":      model,
+			"base_model": model,
+			"mode":       "chat",
+			"prices": map[string]interface{}{
+				"input_cost_per_token": 0.001,
+			},
+		})
+		if err != nil {
+			t.Fatalf("create model price failed: %v", err)
+		}
+		defer testutil.DeleteModelPrice(id)
+
+		resp, err := testutil.GetClient().Get("/open-api/v1/model-prices/" + int64ToStr(id))
+		if err != nil {
+			t.Fatalf("get model price failed: %v", err)
+		}
+		testutil.AssertSuccess(t, resp)
+		testutil.AssertDataFieldEquals(t, resp, "model", model)
 	})
 }
 

@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/rainway-ai-gateway/ai-gateway-api/integration/testutil"
@@ -468,6 +469,51 @@ func TestModelPrice_Import(t *testing.T) {
 			t.Fatalf("import failed: %v", err)
 		}
 		testutil.AssertErrCode(t, resp, 422)
+	})
+
+	t.Run("MP-1-012 导入超长 base_model 拒绝且不清空存量", func(t *testing.T) {
+		// issue #309：导入路径同样必须 422；校验先于 replace 的 DeleteAll，
+		// 预置记录必须存活（否则非法导入会静默清空全表）。
+		provider := testutil.UniqueName("provider")
+		model := testutil.UniqueName("model")
+		id, err := testutil.CreateModelPrice(map[string]interface{}{
+			"provider":   provider,
+			"model":      model,
+			"base_model": model,
+			"mode":       "chat",
+			"prices": map[string]interface{}{
+				"input_cost_per_token": 0.001,
+			},
+		})
+		if err != nil {
+			t.Fatalf("setup failed: %v", err)
+		}
+		defer testutil.DeleteModelPrice(id)
+
+		yaml := fmt.Sprintf(`version: v1.0
+default_currency: RMB
+models:
+  - provider: %s
+    model: %s
+    base_model: %s
+    mode: chat
+    prices:
+      input_cost_per_token: 0.001
+`, provider, model, strings.Repeat("a", 256))
+
+		resp, err := testutil.GetClient().PostMultipartFile("/open-api/v1/model-prices/import", "file", "model-list.yaml", []byte(yaml), map[string]string{
+			"mode": "replace",
+		})
+		if err != nil {
+			t.Fatalf("import failed: %v", err)
+		}
+		testutil.AssertErrCode(t, resp, 422)
+
+		after, err := testutil.GetClient().Get("/open-api/v1/model-prices/" + fmt.Sprintf("%d", id))
+		if err != nil {
+			t.Fatalf("get model price failed: %v", err)
+		}
+		testutil.AssertSuccess(t, after)
 	})
 }
 
