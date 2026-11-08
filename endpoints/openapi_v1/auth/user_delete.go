@@ -17,6 +17,7 @@ package auth
 import (
 	"net/http"
 
+	"github.com/rainway-ai-gateway/ai-gateway-api/lib/validate"
 	"github.com/rainway-ai-gateway/ai-gateway-api/lib/xreq"
 	"github.com/rainway-ai-gateway/ai-gateway-api/model/iauth"
 	"github.com/rainway-ai-gateway/ai-gateway-api/stateful/container"
@@ -26,6 +27,14 @@ import (
 // AUTO GEN BY ctrl, MODIFY AS U NEED
 type UserNameParam struct {
 	UserName *string `uri:"user_name" validate:"required,min=1"`
+}
+
+// Validate performs centralized business validation on the request parameters.
+// The charset check rejects names the storage layer cannot compare precisely
+// (e.g. "u " would match the real user "u" under the PAD SPACE collation,
+// issue #308). Reserved names stay valid references (UserNameRef).
+func (p *UserNameParam) Validate() error {
+	return validate.UserNameRef(*p.UserName)
 }
 
 // UserDeleteRoute route

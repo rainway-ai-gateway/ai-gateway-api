@@ -17,6 +17,7 @@ package auth
 import (
 	"net/http"
 
+	"github.com/rainway-ai-gateway/ai-gateway-api/lib/validate"
 	"github.com/rainway-ai-gateway/ai-gateway-api/lib/xerror"
 	"github.com/rainway-ai-gateway/ai-gateway-api/lib/xreq"
 	"github.com/rainway-ai-gateway/ai-gateway-api/model/iauth"
@@ -27,6 +28,14 @@ import (
 // AUTO GEN BY ctrl, MODIFY AS U NEED
 type TokenNameParam struct {
 	TokenName *string `json:"token_name" uri:"token_name" validate:"required,min=1"`
+}
+
+// Validate performs centralized business validation on the request parameters.
+// The charset check rejects names the storage layer cannot compare precisely
+// (e.g. "t " would match the real token "t" under the PAD SPACE collation,
+// issue #308). Reserved names stay valid references (TokenNameRef).
+func (p *TokenNameParam) Validate() error {
+	return validate.TokenNameRef(*p.TokenName)
 }
 
 // TokenDestroyRoute route

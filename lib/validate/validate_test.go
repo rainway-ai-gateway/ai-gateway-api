@@ -103,6 +103,26 @@ func TestTokenName(t *testing.T) {
 	assert.Error(t, TokenName("-token"))
 }
 
+func TestTokenNameRef(t *testing.T) {
+	// Reserved names are valid references: built-in tokens must stay
+	// operable through by-name query/delete endpoints (issue #308).
+	assert.NoError(t, TokenNameRef("admin"))
+	assert.NoError(t, TokenNameRef("system"))
+	assert.NoError(t, TokenNameRef("default"))
+	assert.NoError(t, TokenNameRef("token_1"))
+	// Trailing/leading whitespace and out-of-charset characters are
+	// rejected: the storage comparison is PAD SPACE insensitive, so an
+	// unchecked name like "t " would match the real token "t".
+	assert.Error(t, TokenNameRef("t "))
+	assert.Error(t, TokenNameRef(" t"))
+	assert.Error(t, TokenNameRef("token name"))
+	assert.Error(t, TokenNameRef("token+1"))
+	assert.Error(t, TokenNameRef("-token"))
+	assert.Error(t, TokenNameRef("token."))
+	assert.Error(t, TokenNameRef(""))
+	assert.Error(t, TokenNameRef(strings.Repeat("a", MaxTokenNameLength+1)))
+}
+
 func TestClusterName(t *testing.T) {
 	assert.NoError(t, ClusterName("cluster_1"))
 	assert.Error(t, ClusterName("-cluster"))

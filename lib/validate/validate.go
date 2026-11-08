@@ -263,21 +263,36 @@ func reverseString(s string) string {
 	return string(r)
 }
 
-// TokenName validates a token name.
-func TokenName(s string) error {
+// tokenNameFormat validates the generic token_name format: length 1..64,
+// charset [a-zA-Z0-9_.-], and no leading/trailing '.', '-', '_'. It does
+// not check reserved names.
+func tokenNameFormat(s string) error {
 	if err := validateName(s, 1, MaxTokenNameLength, "token_name"); err != nil {
 		return err
 	}
 	if err := validateNamePattern(s, nameToken, "token_name"); err != nil {
 		return err
 	}
-	if err := validateNameEdges(s, "token_name"); err != nil {
+	return validateNameEdges(s, "token_name")
+}
+
+// TokenName validates a token name.
+func TokenName(s string) error {
+	if err := tokenNameFormat(s); err != nil {
 		return err
 	}
 	if reservedTokenNames[strings.ToLower(s)] {
 		return xerror.WrapParamErrorWithMsg("token_name %q is reserved", s)
 	}
 	return nil
+}
+
+// TokenNameRef validates a token_name that references an existing token (the
+// by-name lookup used by query/delete endpoints): format only, reserved names
+// are allowed — built-in tokens must remain operable through these very
+// endpoints. Do not add a reserved-name check here.
+func TokenNameRef(s string) error {
+	return tokenNameFormat(s)
 }
 
 // ClusterName validates a cluster name.
