@@ -162,7 +162,125 @@ func TestEntityType_Update(t *testing.T) {
 		testutil.AssertDataFieldEquals(t, got, "description", baseline)
 	})
 
+	t.Run("ET-4-008 越界 level 被拒绝且原值保留", func(t *testing.T) {
+		// issue #313：更新路径此前缺少创建接口已有的 1-5 校验，level=9 曾
+		// 成功落库导致类型实质不可用。
+		for _, level := range []int{0, -1, 6, 9} {
+			resp, err := testutil.GetClient().Patch("/open-api/v1/entity-types/"+typeName, map[string]interface{}{
+				"level": level,
+			})
+			if err != nil {
+				t.Fatalf("request failed: %v", err)
+			}
+			testutil.AssertErrCode(t, resp, 422)
+		}
+
+		got, err := testutil.GetClient().Get("/open-api/v1/entity-types/" + typeName)
+		if err != nil {
+			t.Fatalf("request failed: %v", err)
+		}
+		testutil.AssertSuccess(t, got)
+		testutil.AssertDataFieldEquals(t, got, "level", float64(1))
+	})
+
+	t.Run("ET-4-009 合法 level 修改且其余字段不变", func(t *testing.T) {
+		resp, err := testutil.GetClient().Patch("/open-api/v1/entity-types/"+typeName, map[string]interface{}{
+			"level": 3,
+		})
+		if err != nil {
+			t.Fatalf("request failed: %v", err)
+		}
+		testutil.AssertSuccess(t, resp)
+		testutil.AssertDataFieldEquals(t, resp, "level", float64(3))
+
+		got, err := testutil.GetClient().Get("/open-api/v1/entity-types/" + typeName)
+		if err != nil {
+			t.Fatalf("request failed: %v", err)
+		}
+		testutil.AssertSuccess(t, got)
+		testutil.AssertDataFieldEquals(t, got, "level", float64(3))
+		testutil.AssertDataFieldEquals(t, got, "type_name", typeName)
+		testutil.AssertDataFieldNotEmpty(t, got, "create_time")
+
+		// 还原，避免影响其他子测试对该类型的复用。
+		if _, err := testutil.GetClient().Patch("/open-api/v1/entity-types/"+typeName, map[string]interface{}{
+			"level": 1,
+		}); err != nil {
+			t.Fatalf("restore failed: %v", err)
+		}
+	})
+
 	t.Cleanup(func() {
 		testutil.DeleteEntityType(typeName)
+	})
+}
+
+// TestEntityType_Update_LevelConsistency 验证修改 level 破坏既有 Entity
+// 父子层级约束时返回 409 且不做任何修改（issue #313，产品裁定：拒绝、不级联）。
+func TestEntityType_Update_LevelConsistency(t *testing.T) {
+	parentType := testutil.UniqueEntityTypeName()
+	childType := testutil.UniqueEntityTypeName()
+
+	if _, err := testutil.CreateEntityType(parentType, 1); err != nil {
+		t.Fatalf("setup failed: %v", err)
+	}
+	if _, err := testutil.CreateEntityType(childType, 2); err != nil {
+		t.Fatalf("setup failed: %v", err)
+	}
+
+	parentID, err := testutil.CreateEntity(testutil.UniqueEntityName(), parentType, "")
+	if err != nil {
+		t.Fatalf("setup failed: %v", err)
+	}
+	childID, err := testutil.CreateEntity(testutil.UniqueEntityName(), childType, parentID)
+	if err != nil {
+		t.Fatalf("setup failed: %v", err)
+	}
+
+	t.Cleanup(func() {
+		testutil.DeleteEntity(childID)
+		testutil.DeleteEntity(parentID)
+		testutil.DeleteEntityType(childType)
+		testutil.DeleteEntityType(parentType)
+	})
+
+	t.Run("子类型 level 降到父类型同级必须 409 且关系不变", func(t *testing.T) {
+		// childType 2 -> 1：父类型 level 1，违反"父 level 必须小于子 level"。
+		resp, err := testutil.GetClient().Patch("/open-api/v1/entity-types/"+childType, map[string]interface{}{
+			"level": 1,
+		})
+		if err != nil {
+			t.Fatalf("request failed: %v", err)
+		}
+		testutil.AssertErrCode(t, resp, 409)
+
+		got, err := testutil.GetClient().Get("/open-api/v1/entity-types/" + childType)
+		if err != nil {
+			t.Fatalf("request failed: %v", err)
+		}
+		testutil.AssertSuccess(t, got)
+		testutil.AssertDataFieldEquals(t, got, "level", float64(2))
+
+		child, err := testutil.GetClient().Get("/open-api/v1/entities/" + childID)
+		if err != nil {
+			t.Fatalf("request failed: %v", err)
+		}
+		testutil.AssertSuccess(t, child)
+		testutil.AssertDataFieldEquals(t, child, "parent_id", parentID)
+	})
+
+	t.Run("解除冲突后同一修改成功", func(t *testing.T) {
+		if err := testutil.DeleteEntity(childID); err != nil {
+			t.Fatalf("cleanup child failed: %v", err)
+		}
+
+		resp, err := testutil.GetClient().Patch("/open-api/v1/entity-types/"+childType, map[string]interface{}{
+			"level": 1,
+		})
+		if err != nil {
+			t.Fatalf("request failed: %v", err)
+		}
+		testutil.AssertSuccess(t, resp)
+		testutil.AssertDataFieldEquals(t, resp, "level", float64(1))
 	})
 }

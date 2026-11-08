@@ -53,6 +53,7 @@ API 请求时需在 Header 的 `Authorization` 中携带凭证：
 **约束**
 
 - 普通用户和 Token 都会设定可访问资源的 Scope，只能访问 Scope 内资源。
+- 按名引用端点（查询/删除/变更角色/重置密码用户，查询/删除 Token）对路径中的 `user_name`/`token_name` 执行与创建时一致的字符集校验：名称非法（如含尾随空白等字符集外字符，见 [UserName](00-common.md#12-用户名username) / [TokenName](00-common.md#14-token-名称tokenname)）时返回 422（Param Illegal），不会命中名称相近的用户/Token。
 
 ## 2. 接口清单
 
@@ -222,7 +223,7 @@ Data为数组，每个元素为一个用户。
 
 | 参数名 | 类型 | 参数含义 | 必填 | 补充描述 | 合法性条件 |
 | - | - | - | - | - | - |
-| user_name | string | 待变更角色的用户的用户名 | Y | - | 必填；长度≥1；对应用户必须存在 |
+| user_name | string | 待变更角色的用户的用户名 | Y | - | 必填；类型为 [UserName](00-common.md#12-用户名username)；对应用户必须存在 |
 
 **输入参数（Body）**
 
@@ -500,7 +501,7 @@ Data为数组，每个元素为Token（详见“查看Token详情”）。`token
 
 | 参数名 | 类型 | 参数含义 | 必填 | 补充描述 | 合法性条件 |
 | - | - | - | - | - | - |
-| user_name | string | 用户名 | Y | - | 必填；长度≥1；对应用户必须存在 |
+| user_name | string | 用户名 | Y | - | 必填；类型为 [UserName](00-common.md#12-用户名username)；对应用户必须存在；非法名返回 422，不命中名称相近的用户 |
 
 **返回数据（Data内容）**
 

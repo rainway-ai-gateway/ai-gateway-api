@@ -38,7 +38,11 @@ var CreateEndpoint = &xreq.Endpoint{
 type CreateParam struct {
 	Name *string `json:"cert_name" validate:"required,min=2"`
 
-	Description *string `json:"description" validate:"required,min=2"`
+	// The lower bound is checked in CreateAction via
+	// validate.DescriptionRange (UTF-8 bytes), not via a `min` tag: the
+	// validator counts `min` in runes while certificates.md §1/§2.1 defines
+	// the bound in bytes (issue #310).
+	Description *string `json:"description" validate:"required"`
 	IsDefault   *bool   `json:"is_default" validate:"required"`
 
 	CertFileContent *string `json:"cert_file_content" validate:"required,min=2"`
@@ -87,10 +91,11 @@ func CreateAction(req *http.Request) (interface{}, error) {
 		return nil, err
 	}
 
-	// certificates.md §1/§2.1：description 必填、长度 2-256 字节、不能包含控制字符。
-	// 必填与下限由 CreateParam 的 `required,min=2` tag 承担，此处补齐上限与控制字符；
-	// 校验位于 createActionProcess 之前，被拒请求不落库、不触发默认证书切换。
-	if err := validate.Description(*param.Description, validate.MaxCertificateDescriptionLength, "description"); err != nil {
+	// certificates.md §1/§2.1：description 必填、长度 2-256 字节（按 UTF-8
+	// 字节计）、不能包含控制字符。下限与上限统一在 DescriptionRange 按字节
+	// 校验（issue #310）；校验位于 createActionProcess 之前，被拒请求不落库、
+	// 不触发默认证书切换。
+	if err := validate.DescriptionRange(*param.Description, 2, validate.MaxCertificateDescriptionLength, "description"); err != nil {
 		return nil, err
 	}
 

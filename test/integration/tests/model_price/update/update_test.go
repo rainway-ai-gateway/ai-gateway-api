@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/rainway-ai-gateway/ai-gateway-api/integration/testutil"
@@ -327,5 +328,39 @@ func TestModelPrice_Update(t *testing.T) {
 		assert.InDelta(t, 0.0000041, prices["input_cost_per_token"], 0.0000001)
 		assert.InDelta(t, 0.0000031, prices["cache_read_input_token_cost"], 0.0000001,
 			"unsubmitted price key must keep its value (issue #140)")
+	})
+
+	t.Run("MP-7-005 更新为超长 model 拒绝且原记录不变", func(t *testing.T) {
+		// issue #309：PUT 超长字段必须 422，且不得改动原记录
+		provider := testutil.UniqueName("provider")
+		model := testutil.UniqueName("model")
+		id, err := testutil.CreateModelPrice(map[string]interface{}{
+			"provider":   provider,
+			"model":      model,
+			"base_model": model,
+			"mode":       "chat",
+			"prices": map[string]interface{}{
+				"input_cost_per_token": 0.001,
+			},
+		})
+		if err != nil {
+			t.Fatalf("setup failed: %v", err)
+		}
+		defer testutil.DeleteModelPrice(id)
+
+		resp, err := testutil.GetClient().Put("/open-api/v1/model-prices/"+fmt.Sprintf("%d", id), map[string]interface{}{
+			"model": strings.Repeat("a", 256),
+		})
+		if err != nil {
+			t.Fatalf("request failed: %v", err)
+		}
+		testutil.AssertErrCode(t, resp, 422)
+
+		after, err := testutil.GetClient().Get("/open-api/v1/model-prices/" + fmt.Sprintf("%d", id))
+		if err != nil {
+			t.Fatalf("get model price failed: %v", err)
+		}
+		testutil.AssertSuccess(t, after)
+		testutil.AssertDataFieldEquals(t, after, "model", model)
 	})
 }

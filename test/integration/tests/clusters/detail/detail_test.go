@@ -17,6 +17,7 @@ package clusters_test
 import (
 	"encoding/json"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/rainway-ai-gateway/ai-gateway-api/integration/testutil"
@@ -88,5 +89,43 @@ func TestClusters_Detail_SingleCharName(t *testing.T) {
 
 	t.Cleanup(func() {
 		testutil.DeleteCluster(clusterName)
+	})
+}
+
+// TestClusters_Detail_InvalidName 验证非法 cluster_name 返回 422 而非 404
+//（issue #311：OneParam 此前仅 required,min=1，非法名落到记录查询返回 404，
+// 与 PATCH/POST 的 ClusterName 422 语义不一致）。
+func TestClusters_Detail_InvalidName(t *testing.T) {
+	t.Run("257 字符名称必须 422", func(t *testing.T) {
+		resp, err := testutil.GetClient().Get("/open-api/v1/clusters/" + strings.Repeat("a", 257))
+		if err != nil {
+			t.Fatalf("request failed: %v", err)
+		}
+		testutil.AssertErrCode(t, resp, 422)
+	})
+
+	t.Run("65 字符超出 1-64 上限必须 422", func(t *testing.T) {
+		resp, err := testutil.GetClient().Get("/open-api/v1/clusters/" + strings.Repeat("a", 65))
+		if err != nil {
+			t.Fatalf("request failed: %v", err)
+		}
+		testutil.AssertErrCode(t, resp, 422)
+	})
+
+	t.Run("字符集外字符必须 422", func(t *testing.T) {
+		resp, err := testutil.GetClient().Get("/open-api/v1/clusters/cluster+1")
+		if err != nil {
+			t.Fatalf("request failed: %v", err)
+		}
+		testutil.AssertErrCode(t, resp, 422)
+	})
+
+	t.Run("合法名称但不存在的集群仍返回 404", func(t *testing.T) {
+		// 对照臂：422 与 404 的区分是本次修复的核心语义。
+		resp, err := testutil.GetClient().Get("/open-api/v1/clusters/no-such-cluster-xyz")
+		if err != nil {
+			t.Fatalf("request failed: %v", err)
+		}
+		testutil.AssertErrCode(t, resp, 404)
 	})
 }

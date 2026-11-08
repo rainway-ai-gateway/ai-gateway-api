@@ -54,7 +54,7 @@
 | 字段 | 类型 | 说明 | 可能取值 | 合法性条件 |
 |------|------|------|----------|----------|
 | `name` | string | Provider 唯一标识 | 全局唯一 | 必填；类型为 [ProviderName](./00-common.md#17-provider-名称providername)；合法命名参考 [ClusterName](./00-common.md#15-集群名称clustername) |
-| `description` | string | Provider 描述信息 | - | 非必填；若传入，长度 0-256 字符；不能包含控制字符 |
+| `description` | string | Provider 描述信息 | - | 非必填；若传入，长度 0-256 字节（按 UTF-8 字节计）；不能包含控制字符 |
 | `model_endpoint` | object | 模型发现端点 | 用于调用第三方 AI 模型提供商的模型列表接口 | 非必填；未设置时默认 `schema=https`、`uri=/v1/models`；具体字段见下方 表：Endpoint |
 | `models` | []string | 该 provider 支持的模型列表 | - | 必填；至少 1 个元素；元素非空且不可重复 |
 | `keys` | []ProviderKey | 该 provider 可用的 API Key 明文 | - | 非必填；默认空数组 `[]`；元素须满足 表：ProviderKey 结构 |
@@ -658,7 +658,7 @@ tiers:
 ## 3. 校验规则
 
 1. `name` 必填，类型为 [ProviderName](./00-common.md#17-provider-名称providername)，全局唯一。
-2. `description` 可选；若传入，长度 0-256 字符，不能包含控制字符。
+2. `description` 可选；若传入，长度 0-256 字节（按 UTF-8 字节计），不能包含控制字符。
 3. `instance_source` 非必填，缺省为 `instance_pool`；取值须为枚举值：`instance_pool`、`k8s_pool`。
 4. `instance_pool` 校验按 `instance_source` 条件化：
    - `instance_source=instance_pool`：必填，至少包含 1 个实例；同一 provider 内 `(addr, port)` 组合不能重复；至少有一个实例 `weight > 0`（PATCH 部分更新时省略 `instance_pool` 表示保留原值，不视为违反必填；显式提供时必须满足本条款）。

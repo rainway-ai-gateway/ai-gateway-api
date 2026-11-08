@@ -208,11 +208,28 @@ func TestCertificate_Create(t *testing.T) {
 		assertCertNotCreated(t, certName)
 	})
 
-	t.Run("CERT-1-017 description 长度为 1 被拒绝（tag min=2）", func(t *testing.T) {
+	t.Run("CERT-1-017 description 长度为 1 字节被拒绝", func(t *testing.T) {
 		certName := testutil.UniqueCertName()
 		resp := createWithDescription(t, certName, "x")
 		testutil.AssertErrCode(t, resp, 422)
 		assertCertNotCreated(t, certName)
+	})
+
+	t.Run("CERT-1-018 description 单个多字节字符合法（3 字节 ≥ 2 字节下限）", func(t *testing.T) {
+		// issue #310：certificates.md 的下限按 UTF-8 字节计，单个汉字
+		// （1 字符 / 3 字节）合法；修复前被 `min=2` tag 按字符误拒。
+		certName := testutil.UniqueCertName()
+		defer testutil.DeleteCertificate(certName)
+		resp := createWithDescription(t, certName, "汉")
+		testutil.AssertSuccess(t, resp)
+		testutil.AssertDataFieldEquals(t, resp, "description", "汉")
+
+		getResp, err := testutil.GetClient().Get("/open-api/v1/certificates/" + certName)
+		if err != nil {
+			t.Fatalf("get failed: %v", err)
+		}
+		testutil.AssertSuccess(t, getResp)
+		testutil.AssertDataFieldEquals(t, getResp, "description", "汉")
 	})
 
 	t.Cleanup(func() {

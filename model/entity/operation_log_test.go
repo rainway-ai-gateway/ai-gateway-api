@@ -116,7 +116,7 @@ func TestEntityTypeManager_CreateEntityType_RecordsOperationLog(t *testing.T) {
 		createFn: func(ctx context.Context, param *EntityTypeParam) (int64, error) {
 			return 1, nil
 		},
-	})
+	}, &fakeEntityStorager{})
 	manager.SetOperationLogManager(recorder)
 
 	_, err := manager.CreateEntityType(ctx, &EntityTypeParam{
@@ -149,7 +149,7 @@ func TestEntityTypeManager_UpdateEntityType_RecordsOperationLog(t *testing.T) {
 		updateFn: func(ctx context.Context, filter *EntityTypeFilter, param *EntityTypeParam) (int64, error) {
 			return 1, nil
 		},
-	})
+	}, &fakeEntityStorager{})
 	manager.SetOperationLogManager(recorder)
 
 	_, err := manager.UpdateEntityType(ctx, &EntityTypeFilter{TypeName: &typeName}, &EntityTypeParam{
@@ -179,7 +179,7 @@ func TestEntityTypeManager_DeleteEntityType_RecordsOperationLog(t *testing.T) {
 		deleteFn: func(ctx context.Context, filter *EntityTypeFilter) error {
 			return nil
 		},
-	})
+	}, &fakeEntityStorager{})
 	manager.SetOperationLogManager(recorder)
 
 	err := manager.DeleteEntityType(ctx, &EntityTypeFilter{TypeName: &typeName})

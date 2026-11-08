@@ -103,6 +103,26 @@ func TestTokenName(t *testing.T) {
 	assert.Error(t, TokenName("-token"))
 }
 
+func TestTokenNameRef(t *testing.T) {
+	// Reserved names are valid references: built-in tokens must stay
+	// operable through by-name query/delete endpoints (issue #308).
+	assert.NoError(t, TokenNameRef("admin"))
+	assert.NoError(t, TokenNameRef("system"))
+	assert.NoError(t, TokenNameRef("default"))
+	assert.NoError(t, TokenNameRef("token_1"))
+	// Trailing/leading whitespace and out-of-charset characters are
+	// rejected: the storage comparison is PAD SPACE insensitive, so an
+	// unchecked name like "t " would match the real token "t".
+	assert.Error(t, TokenNameRef("t "))
+	assert.Error(t, TokenNameRef(" t"))
+	assert.Error(t, TokenNameRef("token name"))
+	assert.Error(t, TokenNameRef("token+1"))
+	assert.Error(t, TokenNameRef("-token"))
+	assert.Error(t, TokenNameRef("token."))
+	assert.Error(t, TokenNameRef(""))
+	assert.Error(t, TokenNameRef(strings.Repeat("a", MaxTokenNameLength+1)))
+}
+
 func TestClusterName(t *testing.T) {
 	assert.NoError(t, ClusterName("cluster_1"))
 	assert.Error(t, ClusterName("-cluster"))
@@ -209,6 +229,32 @@ func TestDescription(t *testing.T) {
 		assert.Equal(t, 255, MaxEntityDescriptionLength, "entities.md §1: 0-255")
 		assert.Equal(t, 256, MaxClusterDescriptionLength, "clusters.md §1/§2.1: 0-256")
 		assert.Equal(t, 256, MaxCertificateDescriptionLength, "certificates.md §1/§2.1: 必填 2-256")
+	})
+}
+
+func TestDescriptionRange(t *testing.T) {
+	// certificates.md §1/§2.1: description 必填、长度 2-256 字节（按 UTF-8
+	// 字节计）。下限与上限都按字节计（issue #310）：单个汉字 1 字符/3 字节
+	// 是合法的，单个 ASCII 字符 1 字节不满足下限。
+	t.Run("byte boundaries 2/256", func(t *testing.T) {
+		assert.Error(t, DescriptionRange("a", 2, MaxCertificateDescriptionLength, "description"))
+		assert.NoError(t, DescriptionRange("ab", 2, MaxCertificateDescriptionLength, "description"))
+		assert.NoError(t, DescriptionRange(strings.Repeat("a", 256), 2, MaxCertificateDescriptionLength, "description"))
+		assert.Error(t, DescriptionRange(strings.Repeat("a", 257), 2, MaxCertificateDescriptionLength, "description"))
+	})
+
+	t.Run("single multibyte character passes the lower bound", func(t *testing.T) {
+		assert.NoError(t, DescriptionRange("汉", 2, MaxCertificateDescriptionLength, "description"))
+	})
+
+	t.Run("control characters are rejected within range", func(t *testing.T) {
+		assert.Error(t, DescriptionRange("ab\x01cd", 2, MaxCertificateDescriptionLength, "description"))
+	})
+
+	t.Run("error message names the unit and the bounds", func(t *testing.T) {
+		err := DescriptionRange("a", 2, MaxCertificateDescriptionLength, "description")
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "between 2 and 256 bytes")
 	})
 }
 
