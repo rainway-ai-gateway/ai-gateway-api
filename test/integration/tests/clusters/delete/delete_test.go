@@ -279,4 +279,21 @@ func TestClusters_Delete(t *testing.T) {
 		}
 		assertDeleteSuccess(t, clusterName)
 	})
+
+	t.Run("CL-5-010 删除非法名称集群必须 422", func(t *testing.T) {
+		// issue #311：DELETE 此前对非法名返回 404，与 PATCH/POST 不一致。
+		resp, err := testutil.GetClient().Delete("/open-api/v1/clusters/" + strings.Repeat("a", 257))
+		if err != nil {
+			t.Fatalf("request failed: %v", err)
+		}
+		testutil.AssertErrCode(t, resp, 422)
+	})
+
+	t.Run("CL-5-011 删除 65 字符名称集群必须 422", func(t *testing.T) {
+		resp, err := testutil.GetClient().Delete("/open-api/v1/clusters/" + strings.Repeat("a", 65))
+		if err != nil {
+			t.Fatalf("request failed: %v", err)
+		}
+		testutil.AssertErrCode(t, resp, 422)
+	})
 }

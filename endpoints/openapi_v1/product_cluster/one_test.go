@@ -198,3 +198,59 @@ func TestClusterModel2Control_EppRuntimeFields(t *testing.T) {
 		assert.Contains(t, string(data), `"epp_runtime":null`)
 	})
 }
+
+func TestOneParamValidate(t *testing.T) {
+	cases := []struct {
+		name    string
+		param   *OneParam
+		wantErr bool
+	}{
+		{
+			name:    "valid",
+			param:   &OneParam{Name: lib.PString("cluster-1")},
+			wantErr: false,
+		},
+		{
+			// issue #311 repro: GET/DELETE used to fall through to a 404.
+			name:    "257 chars",
+			param:   &OneParam{Name: lib.PString(strings.Repeat("a", 257))},
+			wantErr: true,
+		},
+		{
+			name:    "65 chars exceeds 1-64",
+			param:   &OneParam{Name: lib.PString(strings.Repeat("a", 65))},
+			wantErr: true,
+		},
+		{
+			name:    "out-of-charset character",
+			param:   &OneParam{Name: lib.PString("cluster+1")},
+			wantErr: true,
+		},
+		{
+			name:    "trailing space",
+			param:   &OneParam{Name: lib.PString("cluster ")},
+			wantErr: true,
+		},
+		{
+			name:    "leading dash",
+			param:   &OneParam{Name: lib.PString("-cluster")},
+			wantErr: true,
+		},
+		{
+			name:    "trailing dot",
+			param:   &OneParam{Name: lib.PString("cluster.")},
+			wantErr: true,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := tc.param.Validate()
+			if tc.wantErr {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
