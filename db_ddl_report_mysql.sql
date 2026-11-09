@@ -279,6 +279,9 @@ CREATE TABLE IF NOT EXISTS bfe_ai_metrics_1m (
     mirror_hit         TINYINT       NOT NULL DEFAULT 0,
     ai_intent_answer   VARCHAR(64)   NOT NULL DEFAULT '',
     -- 聚合指标（24 列，BIGINT，SUM 口径）
+    -- ttft_us_sum/tpot_us_sum：仅 ai_stream=1 行贡献（流式请求首包/每 token
+    -- 耗时微秒累计，issue #315）；非流式行明细 ai_ttft_us/ai_tpot_us 可非 0，
+    -- 但不得进入这两列的累计。
     request_count      BIGINT        DEFAULT NULL,
     error_count        BIGINT        DEFAULT NULL,
     auth_reject_count  BIGINT        DEFAULT NULL,

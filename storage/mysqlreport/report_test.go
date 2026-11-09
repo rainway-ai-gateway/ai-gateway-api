@@ -76,9 +76,9 @@ const overviewFields = "SELECT IFNULL(SUM(request_count),0) AS request_total," +
 	"IFNULL(SUM(total_tokens),0) AS total_tokens," +
 	"IFNULL(SUM(all_time_sum),0) AS all_time_sum," +
 	"IFNULL(MAX(all_time_sum/request_count),0) AS latency_max," +
-	"IFNULL(SUM(ttft_us_sum),0) AS ttft_us_sum," +
+	"IFNULL(SUM(CASE WHEN ai_stream=1 THEN ttft_us_sum ELSE 0 END),0) AS ttft_us_sum," +
 	"IFNULL(SUM(CASE WHEN ai_stream=1 THEN request_count ELSE 0 END),0) AS stream_requests," +
-	"IFNULL(SUM(tpot_us_sum),0) AS tpot_us_sum," +
+	"IFNULL(SUM(CASE WHEN ai_stream=1 THEN tpot_us_sum ELSE 0 END),0) AS tpot_us_sum," +
 	"IFNULL(SUM(rate_limit_hits),0) AS rate_limit_hits," +
 	"IFNULL(SUM(auth_reject_count),0) AS auth_rejects," +
 	"IFNULL(SUM(cache_read_tokens),0) AS cache_read_tokens," +
@@ -170,8 +170,8 @@ func TestBuildTimeSeriesSQL_AllMetrics(t *testing.T) {
 		},
 		{
 			ireport.MetricTTFT, 60,
-			"SELECT CAST(FLOOR(TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', ts_min)/60)*60 AS SIGNED) AS time,SUM(ttft_us_sum) AS ttft_us_sum," +
-				"SUM(tpot_us_sum) AS tpot_us_sum,SUM(CASE WHEN ai_stream=1 THEN request_count ELSE 0 END) AS stream_requests" +
+			"SELECT CAST(FLOOR(TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', ts_min)/60)*60 AS SIGNED) AS time,SUM(CASE WHEN ai_stream=1 THEN ttft_us_sum ELSE 0 END) AS ttft_us_sum," +
+				"SUM(CASE WHEN ai_stream=1 THEN tpot_us_sum ELSE 0 END) AS tpot_us_sum,SUM(CASE WHEN ai_stream=1 THEN request_count ELSE 0 END) AS stream_requests" +
 				" FROM bfe_ai_metrics_1m WHERE (ts_min>=? AND ts_min<?) GROUP BY time ORDER BY time ASC",
 		},
 		{
@@ -794,4 +794,31 @@ func TestScanLogRow_CacheMirrorIntentColumns(t *testing.T) {
 	assert.Nil(t, row.AIIntentConfidence)
 	assert.Nil(t, row.AIIntentLatencyUs)
 	assert.Nil(t, row.AIIntentCacheHit)
+}
+
+// TestTTFTTPOTStreamCaliber pins the stream-only caliber of ttft/tpot on the
+// query side: only rows with ai_stream=1 enter the numerator, so non-stream
+// rows carrying BFE-measured first-byte time no longer inflate the average
+// (ai-gateway-api#315; the job side excludes them at aggregation time).
+func TestTTFTTPOTStreamCaliber(t *testing.T) {
+	overview, _, err := buildOverviewMetricsSQL("bfe_ai_metrics_1m", fullFilter())
+	require.NoError(t, err)
+	assert.Contains(t, overview,
+		"IFNULL(SUM(CASE WHEN ai_stream=1 THEN ttft_us_sum ELSE 0 END),0) AS ttft_us_sum")
+	assert.Contains(t, overview,
+		"IFNULL(SUM(CASE WHEN ai_stream=1 THEN tpot_us_sum ELSE 0 END),0) AS tpot_us_sum")
+	// Denominator caliber is unchanged and numerator has no bare SUM left.
+	assert.Contains(t, overview, "SUM(CASE WHEN ai_stream=1 THEN request_count ELSE 0 END),0) AS stream_requests")
+	assert.NotContains(t, overview, "SUM(ttft_us_sum)")
+	assert.NotContains(t, overview, "SUM(tpot_us_sum)")
+
+	for _, metric := range []string{ireport.MetricTTFT, ireport.MetricTPOT} {
+		ts, _, err := buildTimeSeriesSQL("bfe_ai_metrics_1m", metric, "", &ireport.Filter{Start: testStart, End: testEnd}, 60)
+		require.NoError(t, err)
+		assert.Contains(t, ts, "SUM(CASE WHEN ai_stream=1 THEN ttft_us_sum ELSE 0 END) AS ttft_us_sum")
+		assert.Contains(t, ts, "SUM(CASE WHEN ai_stream=1 THEN tpot_us_sum ELSE 0 END) AS tpot_us_sum")
+		assert.Contains(t, ts, "SUM(CASE WHEN ai_stream=1 THEN request_count ELSE 0 END) AS stream_requests")
+		assert.NotContains(t, ts, "SUM(ttft_us_sum)")
+		assert.NotContains(t, ts, "SUM(tpot_us_sum)")
+	}
 }

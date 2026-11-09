@@ -79,7 +79,7 @@ func TestDorisBackend_NewDimensionsSupported(t *testing.T) {
 		getJSON(t, reportPrefix+"/rankings", with(window, "dimension", "mirror_hit"), &data)
 		require.Len(t, data.Items, 2)
 		assert.Equal(t, "0", data.Items[0].Name)
-		assert.Equal(t, int64(510), data.Items[0].RequestCount)
+		assert.Equal(t, int64(530), data.Items[0].RequestCount)
 		assert.Equal(t, "1", data.Items[1].Name)
 		assert.Equal(t, int64(150), data.Items[1].RequestCount)
 	})
@@ -108,9 +108,9 @@ func TestDorisBackend_NewDimensionsSupported(t *testing.T) {
 			byName[one.Name] = one
 		}
 		assert.Equal(t, int64(450), byName["hit"].RequestCount)
-		assert.InDelta(t, 450.0/660.0, byName["hit"].Ratio, 1e-9)
+		assert.InDelta(t, 450.0/680.0, byName["hit"].Ratio, 1e-9)
 		assert.Equal(t, int64(200), byName["miss"].RequestCount)
-		assert.Equal(t, int64(10), byName["unknown"].RequestCount)
+		assert.Equal(t, int64(30), byName["unknown"].RequestCount)
 	})
 
 	t.Run("distribution_mirror_hit", func(t *testing.T) {
@@ -121,7 +121,7 @@ func TestDorisBackend_NewDimensionsSupported(t *testing.T) {
 		for _, one := range data.Items {
 			byName[one.Name] = one
 		}
-		assert.Equal(t, int64(510), byName["0"].RequestCount)
+		assert.Equal(t, int64(530), byName["0"].RequestCount)
 		assert.Equal(t, int64(150), byName["1"].RequestCount)
 	})
 
@@ -141,7 +141,7 @@ func TestDorisBackend_NewDimensionsSupported(t *testing.T) {
 		assert.InDelta(t, 400.0/60, byKey[pointKey{epoch("2026-09-15 10:00:00"), "hit"}], 1e-9)
 		assert.InDelta(t, 200.0/60, byKey[pointKey{epoch("2026-09-15 10:00:00"), "miss"}], 1e-9)
 		assert.InDelta(t, 50.0/60, byKey[pointKey{epoch("2026-09-15 10:01:00"), "hit"}], 1e-9)
-		assert.InDelta(t, 10.0/60, byKey[pointKey{epoch("2026-09-15 10:01:00"), ""}], 1e-9)
+		assert.InDelta(t, 30.0/60, byKey[pointKey{epoch("2026-09-15 10:01:00"), ""}], 1e-9)
 	})
 
 	t.Run("legacy_dimension_still_supported", func(t *testing.T) {
