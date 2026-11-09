@@ -288,9 +288,9 @@ var overviewMetricFields = []string{
 	"ifNull(SUM(total_tokens),0) AS total_tokens_total",
 	"ifNull(SUM(all_time_sum),0) AS all_time_sum_total",
 	"ifNull(MAX(all_time_sum/request_count),0) AS latency_max",
-	"ifNull(SUM(ttft_us_sum),0) AS ttft_us_sum_total",
+	"ifNull(SUM(CASE WHEN ai_stream=1 THEN ttft_us_sum ELSE 0 END),0) AS ttft_us_sum_total",
 	"ifNull(SUM(CASE WHEN ai_stream=1 THEN request_count ELSE 0 END),0) AS stream_requests",
-	"ifNull(SUM(tpot_us_sum),0) AS tpot_us_sum_total",
+	"ifNull(SUM(CASE WHEN ai_stream=1 THEN tpot_us_sum ELSE 0 END),0) AS tpot_us_sum_total",
 	"ifNull(SUM(rate_limit_hits),0) AS rate_limit_hits_total",
 	"ifNull(SUM(auth_reject_count),0) AS auth_rejects",
 	"ifNull(SUM(cache_read_tokens),0) AS cache_read_tokens_total",
@@ -414,8 +414,8 @@ func timeSeriesMetricFields(metric string, bucketSec int, column string) ([]stri
 			"MAX(all_time_sum/request_count) AS latency_max")
 	case ireport.MetricTTFT, ireport.MetricTPOT:
 		fields = append(fields,
-			"SUM(ttft_us_sum) AS ttft_us_sum_total",
-			"SUM(tpot_us_sum) AS tpot_us_sum_total",
+			"SUM(CASE WHEN ai_stream=1 THEN ttft_us_sum ELSE 0 END) AS ttft_us_sum_total",
+			"SUM(CASE WHEN ai_stream=1 THEN tpot_us_sum ELSE 0 END) AS tpot_us_sum_total",
 			"SUM(CASE WHEN ai_stream=1 THEN request_count ELSE 0 END) AS stream_requests")
 	case ireport.MetricCost:
 		fields = append(fields,

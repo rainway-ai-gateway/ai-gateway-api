@@ -430,3 +430,30 @@ func TestNullPtrHelpers(t *testing.T) {
 	require.NotNil(t, nullCostAmountPtr(c))
 	assert.InDelta(t, 0.000669, *nullCostAmountPtr(c), 1e-12)
 }
+
+// TestTTFTTPOTStreamCaliber pins the stream-only caliber of ttft/tpot on the
+// query side: only rows with ai_stream=1 enter the numerator, so non-stream
+// rows carrying BFE-measured first-byte time no longer inflate the average
+// (ai-gateway-api#315; the MV side excludes them at aggregation time).
+func TestTTFTTPOTStreamCaliber(t *testing.T) {
+	overview, _, err := buildOverviewMetricsSQL("bfe_ai_metrics_1m", fullFilter())
+	require.NoError(t, err)
+	assert.Contains(t, overview,
+		"ifNull(SUM(CASE WHEN ai_stream=1 THEN ttft_us_sum ELSE 0 END),0) AS ttft_us_sum_total")
+	assert.Contains(t, overview,
+		"ifNull(SUM(CASE WHEN ai_stream=1 THEN tpot_us_sum ELSE 0 END),0) AS tpot_us_sum_total")
+	// Denominator caliber is unchanged and numerator has no bare SUM left.
+	assert.Contains(t, overview, "SUM(CASE WHEN ai_stream=1 THEN request_count ELSE 0 END),0) AS stream_requests")
+	assert.NotContains(t, overview, "SUM(ttft_us_sum)")
+	assert.NotContains(t, overview, "SUM(tpot_us_sum)")
+
+	for _, metric := range []string{ireport.MetricTTFT, ireport.MetricTPOT} {
+		ts, _, err := buildTimeSeriesSQL("bfe_ai_metrics_1m", metric, "", &ireport.Filter{Start: testStart, End: testEnd}, 60)
+		require.NoError(t, err)
+		assert.Contains(t, ts, "SUM(CASE WHEN ai_stream=1 THEN ttft_us_sum ELSE 0 END) AS ttft_us_sum_total")
+		assert.Contains(t, ts, "SUM(CASE WHEN ai_stream=1 THEN tpot_us_sum ELSE 0 END) AS tpot_us_sum_total")
+		assert.Contains(t, ts, "SUM(CASE WHEN ai_stream=1 THEN request_count ELSE 0 END) AS stream_requests")
+		assert.NotContains(t, ts, "SUM(ttft_us_sum)")
+		assert.NotContains(t, ts, "SUM(tpot_us_sum)")
+	}
+}

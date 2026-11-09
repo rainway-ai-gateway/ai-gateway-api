@@ -532,8 +532,8 @@ func buildAggregateInsertSQL(detailTable, metricsTable string) string {
 		" SUM(IFNULL(ai_input_tokens,0)) AS input_tokens," +
 		" SUM(IFNULL(ai_output_tokens,0)) AS output_tokens," +
 		" SUM(IFNULL(ai_total_tokens,0)) AS total_tokens," +
-		" SUM(IFNULL(ai_ttft_us,0)) AS ttft_us_sum," +
-		" SUM(IFNULL(ai_tpot_us,0)) AS tpot_us_sum," +
+		" SUM(CASE WHEN ai_stream=1 THEN IFNULL(ai_ttft_us,0) ELSE 0 END) AS ttft_us_sum," +
+		" SUM(CASE WHEN ai_stream=1 THEN IFNULL(ai_tpot_us,0) ELSE 0 END) AS tpot_us_sum," +
 		" SUM(IFNULL(req_header_len,0)) AS req_header_bytes," +
 		" SUM(IFNULL(req_body_len,0)) AS req_body_bytes," +
 		" SUM(IFNULL(res_header_len,0)) AS res_header_bytes," +

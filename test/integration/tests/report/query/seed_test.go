@@ -24,13 +24,18 @@ package query_test
 //	C  10:00 gpt-4   key-2 azure    openai  200  1  ''    300  0       3000 600  3600 30000   150000   15000  RMB  300   0   0    3000       0    hit          0      writing
 //	D  10:01 gpt-4o  key-1 openai   openai  200  1  ''     50  0        500 100   600  5000    25000    2500  USD   50   0   0     500     100    hit          1      coding
 //	E  10:01 claude   key-3 ''(空)  ''(空)  200  0  ''     10  0        100  20   120  1000        0       0  ''     0   0   1       0       0    ''           0      ''
+//	F  10:01 llama-3 key-9 anthropic anthropic 200 0 ''    20  0          0   0     0  2000    40000    4000  ''     0   0   0       0       0    ''           0      ''
 //
-// 窗口合计：req=660 err=200 in=6600 out=1320 tot=7920 all_time=66000
+// 窗口合计：req=680 err=200 in=6600 out=1320 tot=7920 all_time=68000
 //           stream 请求=450 ttft_us=225000 tpot_us=22500 rl=2 rej=1
+//           行 F 是 issue #315 的污染复现行：非流式但携带 BFE 实测首包延迟
+//           （ttft_us_sum=40000>0），流式口径合计（stream/ttft/tpot）不含 F；
+//           全量口径（req/all_time 等）含 F。修复前 overview ttft_avg 会把 F
+//           计入分子（(225000+40000)/450/1000=0.589ms），修复后必须为 0.5ms。
 //           cost: USD=350 RMB=300（定点值；接口出口 ÷1e8 后为 3.5e-6 美元 / 3e-6 元）
-//           cache: read=4500 write=700；ai_cache_status 分布 hit=450/miss=200/''=10
-//           mirror_hit: 1→150（A+D）、0→510（B+C+E）
-//           ai_intent_answer: coding=150（A+D）、unknown=200（B）、writing=300（C）、''=10（E）
+//           cache: read=4500 write=700；ai_cache_status 分布 hit=450/miss=200/''=30（E+F）
+//           mirror_hit: 1→150（A+D）、0→530（B+C+E+F）
+//           ai_intent_answer: coding=150（A+D）、unknown=200（B）、writing=300（C）、''=30（E+F）
 //
 // 明细表 bfe_ai_request_log 6 行（log_time 倒序后 logid 为 1006..1001），
 // 覆盖：err_code 非空、JSON 列非空、ai_apikey_id NULL（未认证行）、provider 空串，
@@ -60,7 +65,8 @@ VALUES
 ('2026-09-15 10:00:00', 'key-1', 'gpt-4', 'gpt-4o', 0, 500, 'E500', 'openai', 'openai', 'USD', 200, 200, 2000, 400, 2400, 0, 0, 20000, 2, 0, 200, 0, 400, 'miss', 0, 'unknown'),
 ('2026-09-15 10:00:00', 'key-2', 'gpt-4', 'gpt-4', 1, 200, '', 'azure', 'openai', 'RMB', 300, 0, 3000, 600, 3600, 150000, 15000, 30000, 0, 0, 300, 3000, 0, 'hit', 0, 'writing'),
 ('2026-09-15 10:01:00', 'key-1', 'gpt-4', 'gpt-4o', 1, 200, '', 'openai', 'openai', 'USD', 50, 0, 500, 100, 600, 25000, 2500, 5000, 0, 0, 50, 500, 100, 'hit', 1, 'coding'),
-('2026-09-15 10:01:00', 'key-3', 'claude-3', 'claude', 0, 200, '', '', '', '', 10, 0, 100, 20, 120, 0, 0, 1000, 0, 1, 0, 0, 0, '', 0, '')`
+('2026-09-15 10:01:00', 'key-3', 'claude-3', 'claude', 0, 200, '', '', '', '', 10, 0, 100, 20, 120, 0, 0, 1000, 0, 1, 0, 0, 0, '', 0, ''),
+('2026-09-15 10:01:00', 'key-9', 'llama-3', 'llama-3', 0, 200, '', 'anthropic', 'anthropic', '', 20, 0, 0, 0, 0, 40000, 4000, 2000, 0, 0, 0, 0, 0, '', 0, '')`
 
 const detailSeedSQL = `INSERT INTO bfe_ai_request_log
 (logid, log_time, hostid, product, ai_apikey_id, ai_requested_model,

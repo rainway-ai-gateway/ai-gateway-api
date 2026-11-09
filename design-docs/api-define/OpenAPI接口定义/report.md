@@ -87,7 +87,7 @@
 | `err_code` / `err_msg` | string | 错误码 / 错误详情；无错误时 `err_code` 为 null |
 | `ai_input_tokens` / `ai_output_tokens` / `ai_total_tokens` | int64 | Token 计数 |
 | `all_time` | int | 请求总耗时（毫秒） |
-| `ai_ttft_us` / `ai_tpot_us` | int64 | TTFT / TPOT（微秒）；未设置（非流式）为 **0**（历史口径：入库未做空值区分，与意图字段的 null 语义不同） |
+| `ai_ttft_us` / `ai_tpot_us` | int64 | TTFT / TPOT（微秒）；BFE 对所有经 body-process 的响应（含非流式，file/batch 模式除外）都会实测并记录首包/每 token 耗时，**非流式行可为非 0**；按流式口径统计时必须叠加 `ai_stream=1`（issue #315） |
 | `ai_cost_value` / `ai_cost_currency` | number / string | 成本金额（元/美元，服务端已完成 ÷1e8 换算）/ 币种；无成本为 null |
 | `ai_price_miss` | bool | 是否发生过缺价（请求的「模型 × 接口类型」无价格条目：含回退计费 / 按 0 / 转发前拒绝 / 价格表缺失）；**非 2xx 的拒绝行也会出现**，筛选时建议叠加 `res_status_code`；未缺价为 null |
 | `ai_price_warn` | string | 缺价形态：`fallback`（回退 chat 价计费）/ `no_entry`（按 0）/ `no_baseline`（无 chat 基线按 0）/ `reject`（转发前拒绝）/ `subitem_missing`（回退条目缺子项价格）/ `no_model_table`（价格表缺失）；多因取最具体；未缺价为 null |
@@ -134,6 +134,7 @@
 **约束**
 
 - 时序类指标（QPS/Token/延迟/成本/限流）读聚合表合计；`logs_total` 走明细表 `COUNT(*)`。
+- `ttft_avg_ms` / `tpot_avg_ms` 为流式口径：分子只取 `ai_stream=1` 聚合行的 `ttft_us_sum` / `tpot_us_sum` 合计，分母为流式请求数，结果 ÷1000 换算为毫秒；分母为 0 时返回 `0`。非流式行虽携带 BFE 实测首包耗时，但不进入分子（issue #315）。
 - 成本按币种分组返回换算后的金额（定点值 ÷ 1e8，元/美元），换算由服务端完成，调用方直接展示。
 - 缓存/镜像/意图三组指标：`cache` 的命中/跳过/未命中次数、镜像命中数、意图分类/unknown 数走明细表条件 `COUNT`（与 `logs_total` 同一模式，7 天窗口上限内）；`cache.read_tokens` / `cache.write_tokens` 走聚合表 `cache_read_tokens` / `cache_write_tokens` 列 SUM（既有列，口径与 BFE 日志一致）。
 
@@ -202,7 +203,7 @@
 | `qps` | 请求 QPS | `value` |
 | `tokens` | Token 吞吐（个/秒） | `input`、`output`、`total` |
 | `latency` | 延迟（毫秒） | `avg`、`max`（Doris / StarRocks / ClickHouse 后端另有 `p50`、`p90`、`p99`） |
-| `ttft` / `tpot` | 首 Token / 每 Token 延迟（毫秒，聚合于 stream 请求） | `avg` |
+| `ttft` / `tpot` | 首 Token / 每 Token 延迟（毫秒，聚合于 stream 请求）：每桶分子只取 `ai_stream=1` 行的 `ttft_us_sum` / `tpot_us_sum` 合计，分母为桶内流式请求数，÷1000 换算；桶内无流式请求时该桶返回 `0`（非空） | `avg` |
 | `cost` | 成本增速（金额/秒，元/秒、美元/秒） | 按币种多条序列，`currency` 字段区分 |
 | `cache_tokens` | 缓存 Token 速率（个/秒） | 按 `cache_read` / `cache_write` 两条序列，`kind` 字段区分 |
 

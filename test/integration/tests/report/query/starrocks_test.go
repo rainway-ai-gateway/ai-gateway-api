@@ -52,7 +52,7 @@ package query_test
 // MV 行数（COUNT(*)）达标后才启动 api，组 2 用例内不再有刷新时序问题。
 // 由此带来的断言口径变化：聚合端点（overview/timeseries/rankings/
 // distribution）的期望值是"6 行明细经 MV 的派生手算值"，而非 MySQL/doris
-// 组的聚合表手算值（660 请求口径）——手算值表见 starrocks_seed_test.go
+// 组的聚合表手算值（680 请求口径）——手算值表见 starrocks_seed_test.go
 // 文件头。另：种子时间平移到 2030-09-15 以规避 MV partition_ttl 7 天，
 // 基表动态分区仅维护 [今天-7, 今天+3]，2030 行靠 ${INIT_PARTITION_DATE}
 // 替换为 2030-09-16 落入 p_init 分区。
@@ -194,7 +194,7 @@ func TestStarRocksBackend_RankingsOnMySQL(t *testing.T) {
 		var data rankingsData
 		getSRJSON(t, client, reportPrefix+"/rankings", with(window, "dimension", "model"), &data)
 
-		require.Len(t, data.Items, 3)
+		require.Len(t, data.Items, 4)
 		assert.Equal(t, "gpt-4o", data.Items[0].Name)
 		assert.Equal(t, int64(350), data.Items[0].RequestCount)
 		assert.Equal(t, int64(200), data.Items[0].ErrorCount)
@@ -202,8 +202,10 @@ func TestStarRocksBackend_RankingsOnMySQL(t *testing.T) {
 		assert.Equal(t, int64(700), data.Items[0].OutputTokens)
 		assert.Equal(t, "gpt-4", data.Items[1].Name)
 		assert.Equal(t, int64(300), data.Items[1].RequestCount)
-		assert.Equal(t, "claude", data.Items[2].Name)
-		assert.Equal(t, int64(10), data.Items[2].RequestCount)
+		assert.Equal(t, "llama-3", data.Items[2].Name) // 行 F
+		assert.Equal(t, int64(20), data.Items[2].RequestCount)
+		assert.Equal(t, "claude", data.Items[3].Name)
+		assert.Equal(t, int64(10), data.Items[3].RequestCount)
 	})
 
 	t.Run("status", func(t *testing.T) {
@@ -212,7 +214,7 @@ func TestStarRocksBackend_RankingsOnMySQL(t *testing.T) {
 
 		require.Len(t, data.Items, 2)
 		assert.Equal(t, "200", data.Items[0].Name)
-		assert.Equal(t, int64(460), data.Items[0].RequestCount)
+		assert.Equal(t, int64(480), data.Items[0].RequestCount)
 		assert.Equal(t, "500", data.Items[1].Name)
 		assert.Equal(t, int64(200), data.Items[1].RequestCount)
 	})
@@ -235,9 +237,9 @@ func TestStarRocksBackend_RankingsOnMySQL(t *testing.T) {
 
 		require.Len(t, data.Items, 2)
 		assert.Equal(t, "0", data.Items[0].Name)
-		assert.Equal(t, int64(510), data.Items[0].RequestCount)
+		assert.Equal(t, int64(530), data.Items[0].RequestCount) // B+C+E+F
 		assert.Equal(t, "1", data.Items[1].Name)
-		assert.Equal(t, int64(150), data.Items[1].RequestCount)
+		assert.Equal(t, int64(150), data.Items[1].RequestCount) // A+D
 	})
 
 	t.Run("intent_answer", func(t *testing.T) {
@@ -252,7 +254,7 @@ func TestStarRocksBackend_RankingsOnMySQL(t *testing.T) {
 		assert.Equal(t, int64(200), byName["unknown"])
 		assert.Equal(t, int64(300), byName["writing"])
 		assert.Equal(t, int64(150), byName["coding"])
-		assert.NotContains(t, byName, "") // 行 E 的空值不进排行
+		assert.NotContains(t, byName, "") // 行 E/F 的空值不进排行
 	})
 }
 
@@ -273,10 +275,10 @@ func TestStarRocksBackend_DistributionOnMySQL(t *testing.T) {
 		for _, one := range data.Items {
 			byName[one.Name] = one
 		}
-		assert.Equal(t, int64(460), byName["200"].RequestCount)
-		assert.InDelta(t, 460.0/660.0, byName["200"].Ratio, 1e-9)
+		assert.Equal(t, int64(480), byName["200"].RequestCount)
+		assert.InDelta(t, 480.0/680.0, byName["200"].Ratio, 1e-9)
 		assert.Equal(t, int64(200), byName["500"].RequestCount)
-		assert.InDelta(t, 200.0/660.0, byName["500"].Ratio, 1e-9)
+		assert.InDelta(t, 200.0/680.0, byName["500"].Ratio, 1e-9)
 		assert.InDelta(t, 1, byName["200"].Ratio+byName["500"].Ratio, 1e-9)
 	})
 
@@ -284,14 +286,15 @@ func TestStarRocksBackend_DistributionOnMySQL(t *testing.T) {
 		var data distributionData
 		getSRJSON(t, client, reportPrefix+"/distribution", with(window, "dimension", "protocol"), &data)
 
-		require.Len(t, data.Items, 2)
+		require.Len(t, data.Items, 3)
 		byName := map[string]distItem{}
 		for _, one := range data.Items {
 			byName[one.Name] = one
 		}
 		assert.Equal(t, int64(650), byName["openai"].RequestCount)
+		assert.Equal(t, int64(20), byName["anthropic"].RequestCount) // 行 F
 		assert.Equal(t, int64(10), byName["unknown"].RequestCount)
-		assert.InDelta(t, 10.0/660.0, byName["unknown"].Ratio, 1e-9)
+		assert.InDelta(t, 10.0/680.0, byName["unknown"].Ratio, 1e-9)
 	})
 
 	t.Run("cache_status", func(t *testing.T) {
@@ -304,9 +307,9 @@ func TestStarRocksBackend_DistributionOnMySQL(t *testing.T) {
 			byName[one.Name] = one
 		}
 		assert.Equal(t, int64(450), byName["hit"].RequestCount)
-		assert.InDelta(t, 450.0/660.0, byName["hit"].Ratio, 1e-9)
+		assert.InDelta(t, 450.0/680.0, byName["hit"].Ratio, 1e-9)
 		assert.Equal(t, int64(200), byName["miss"].RequestCount)
-		assert.Equal(t, int64(10), byName["unknown"].RequestCount)
+		assert.Equal(t, int64(30), byName["unknown"].RequestCount)
 	})
 
 	t.Run("mirror_hit", func(t *testing.T) {
@@ -318,9 +321,9 @@ func TestStarRocksBackend_DistributionOnMySQL(t *testing.T) {
 		for _, one := range data.Items {
 			byName[one.Name] = one
 		}
-		assert.Equal(t, int64(510), byName["0"].RequestCount)
+		assert.Equal(t, int64(530), byName["0"].RequestCount)
 		assert.Equal(t, int64(150), byName["1"].RequestCount)
-		assert.InDelta(t, 150.0/660.0, byName["1"].Ratio, 1e-9)
+		assert.InDelta(t, 150.0/680.0, byName["1"].Ratio, 1e-9)
 	})
 }
 
@@ -344,7 +347,7 @@ func TestStarRocksBackend_TimeSeriesOnMySQL(t *testing.T) {
 		assert.InDelta(t, 10, *data.Series[0].Value, 1e-9) // 600/60
 		assert.Equal(t, epoch("2026-09-15 10:01:00"), data.Series[1].Time)
 		require.NotNil(t, data.Series[1].Value)
-		assert.InDelta(t, 1, *data.Series[1].Value, 1e-9) // 60/60
+		assert.InDelta(t, 80.0/60, *data.Series[1].Value, 1e-9) // (50+10+20)/60，含行 F
 	})
 
 	t.Run("tokens", func(t *testing.T) {
@@ -425,7 +428,7 @@ func TestStarRocksBackend_TimeSeriesOnMySQL(t *testing.T) {
 		assert.InDelta(t, 400.0/60, byKey[pointKey{epoch("2026-09-15 10:00:00"), "hit"}], 1e-9)
 		assert.InDelta(t, 200.0/60, byKey[pointKey{epoch("2026-09-15 10:00:00"), "miss"}], 1e-9)
 		assert.InDelta(t, 50.0/60, byKey[pointKey{epoch("2026-09-15 10:01:00"), "hit"}], 1e-9)
-		assert.InDelta(t, 10.0/60, byKey[pointKey{epoch("2026-09-15 10:01:00"), ""}], 1e-9)
+		assert.InDelta(t, 30.0/60, byKey[pointKey{epoch("2026-09-15 10:01:00"), ""}], 1e-9)
 	})
 }
 

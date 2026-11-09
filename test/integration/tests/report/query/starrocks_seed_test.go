@@ -35,7 +35,7 @@ package query_test
 //     40 维分钟桶聚合（端到端 1~2 分钟，本机 3.5.21 实测约 34s；
 //     testutil.StartStarRocksReportServer 轮询 MV 行数达标后才启动 api）。
 //     聚合端点断言值 = 下表"MV 派生手算值"，不再与 MySQL/doris 组的聚合表
-//     手算值（660 请求口径）相同——单源种子下 6 行明细只能聚出 6 个请求。
+//     手算值（680 请求口径）相同——单源种子下 6 行明细只能聚出 6 个请求。
 //
 //  3. 复杂列按 SR DDL 类型落地（实机 DESCRIBE 确认，见
 //     ai-gateway-observability/starrocks/sqls/bfe_ai_request_log.sql）：

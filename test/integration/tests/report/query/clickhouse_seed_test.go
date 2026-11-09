@@ -43,7 +43,8 @@ package query_test
 
 // chAggregateSeedSQL 即 aggregateSeedSQL 的 ClickHouse 形态：仅时间列由
 // 2026-09-15 平移到 2030-09-15（见文件头偏差 1），列清单与取值逐项一致
-// （CH 聚合表 40 维全 String/数值 NOT NULL 列，字面量兼容）。
+// （CH 聚合表 40 维全 String/数值 NOT NULL 列，字面量兼容）。与 MySQL 组
+// 一样含行 F（issue #315 污染复现行：非流式但 ttft_us_sum=40000>0）。
 const chAggregateSeedSQL = `INSERT INTO bfe_ai_metrics_1m
 (ts_min, ai_apikey_id, ai_requested_model, ai_target_model, ai_stream,
  res_status_code, err_code, ai_provider, ai_protocol, ai_cost_currency,
@@ -56,7 +57,8 @@ VALUES
 ('2030-09-15 10:00:00', 'key-1', 'gpt-4', 'gpt-4o', 0, 500, 'E500', 'openai', 'openai', 'USD', 200, 200, 2000, 400, 2400, 0, 0, 20000, 2, 0, 200, 0, 400, 'miss', 0, 'unknown'),
 ('2030-09-15 10:00:00', 'key-2', 'gpt-4', 'gpt-4', 1, 200, '', 'azure', 'openai', 'RMB', 300, 0, 3000, 600, 3600, 150000, 15000, 30000, 0, 0, 300, 3000, 0, 'hit', 0, 'writing'),
 ('2030-09-15 10:01:00', 'key-1', 'gpt-4', 'gpt-4o', 1, 200, '', 'openai', 'openai', 'USD', 50, 0, 500, 100, 600, 25000, 2500, 5000, 0, 0, 50, 500, 100, 'hit', 1, 'coding'),
-('2030-09-15 10:01:00', 'key-3', 'claude-3', 'claude', 0, 200, '', '', '', '', 10, 0, 100, 20, 120, 0, 0, 1000, 0, 1, 0, 0, 0, '', 0, '')`
+('2030-09-15 10:01:00', 'key-3', 'claude-3', 'claude', 0, 200, '', '', '', '', 10, 0, 100, 20, 120, 0, 0, 1000, 0, 1, 0, 0, 0, '', 0, ''),
+('2030-09-15 10:01:00', 'key-9', 'llama-3', 'llama-3', 0, 200, '', 'anthropic', 'anthropic', '', 20, 0, 0, 0, 0, 40000, 4000, 2000, 0, 0, 0, 0, 0, '', 0, '')`
 
 // chDetailSeedSQL 即 detailSeedSQL 的 ClickHouse 形态：时间平移到 2030-09-15，
 // 复杂类型列按文件头偏差 2-5 调整；窗口内 6 行的维度/指标取值与 MySQL 种子一致，
