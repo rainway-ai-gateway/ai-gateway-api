@@ -63,8 +63,25 @@ func TestEntityType_Delete(t *testing.T) {
 		if err != nil {
 			t.Fatalf("request failed: %v", err)
 		}
-		if resp.ErrNum != 409 && resp.ErrNum != 422 {
-			t.Errorf("expected ErrNum=409 or 422, got ErrNum=%d, ErrMsg=%s", resp.ErrNum, resp.ErrMsg)
+		testutil.AssertErrCode(t, resp, 409)
+
+		// 引用保护：Entity-Type 与 Entity 均保留，Entity 的 type 引用不悬空
+		resp, err = testutil.GetClient().Get("/open-api/v1/entity-types/" + typeName)
+		if err != nil {
+			t.Fatalf("readback entity-type failed: %v", err)
+		}
+		testutil.AssertSuccess(t, resp)
+		resp, err = testutil.GetClient().Get("/open-api/v1/entities/" + entityID)
+		if err != nil {
+			t.Fatalf("readback entity failed: %v", err)
+		}
+		testutil.AssertSuccess(t, resp)
+		entityType, err := testutil.GetDataField(resp, "type")
+		if err != nil {
+			t.Fatalf("readback entity type field failed: %v", err)
+		}
+		if entityType != typeName {
+			t.Errorf("expected entity type %q, got %v", typeName, entityType)
 		}
 		t.Cleanup(func() {
 			testutil.DeleteEntity(entityID)
