@@ -91,7 +91,7 @@ func (p *UpsertParam) Validate() error {
 		}
 	}
 
-	return validate.InstancePool(Instancesc2i(p.Instances))
+	return icluster_conf.ValidateInstancePool(Instancesc2i(p.Instances))
 }
 
 // CreateRoute route

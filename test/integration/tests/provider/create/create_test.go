@@ -547,6 +547,44 @@ func TestProvider_Create(t *testing.T) {
 		testutil.AssertErrCode(t, resp, 422)
 	})
 
+	t.Run("PV-1-022 instance addr 为非法 hostname（连字符开头）", func(t *testing.T) {
+		// issue #321：E2E 复现形态，双实例 weight 0/100
+		name := testutil.UniqueProviderName()
+		body := map[string]interface{}{
+			"name": name,
+			"instance_pool": []interface{}{
+				map[string]interface{}{"addr": "-bad", "weight": 0, "port": 8080},
+				map[string]interface{}{"addr": "10.0.0.2", "weight": 100, "port": 8080},
+			},
+			"model_protocols": []string{"openai"},
+			"models":          []string{"deepseek-chat"},
+		}
+		resp, err := testutil.GetClient().Post("/open-api/v1/providers", body)
+		if err != nil {
+			t.Fatalf("request failed: %v", err)
+		}
+		testutil.AssertErrCode(t, resp, 422)
+
+		// 非持久化守护：非法 Provider 不得落库
+		resp, err = testutil.GetClient().Get("/open-api/v1/providers/" + name)
+		if err != nil {
+			t.Fatalf("readback failed: %v", err)
+		}
+		testutil.AssertErrCode(t, resp, 404)
+	})
+
+	t.Run("PV-1-023 instance addr 尾随连字符", func(t *testing.T) {
+		body := minProviderBody(testutil.UniqueProviderName())
+		body["instance_pool"] = []interface{}{
+			map[string]interface{}{"addr": "bad-", "weight": 100, "port": 8080},
+		}
+		resp, err := testutil.GetClient().Post("/open-api/v1/providers", body)
+		if err != nil {
+			t.Fatalf("request failed: %v", err)
+		}
+		testutil.AssertErrCode(t, resp, 422)
+	})
+
 	t.Cleanup(func() {
 		testutil.DeleteProvider(providerMin)
 		testutil.DeleteProvider(providerFull)

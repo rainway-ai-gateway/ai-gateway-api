@@ -76,9 +76,7 @@ func TestEntity_Delete(t *testing.T) {
 		if err != nil {
 			t.Fatalf("request failed: %v", err)
 		}
-		if resp.ErrNum != 409 && resp.ErrNum != 422 {
-			t.Errorf("expected ErrNum=409 or 422, got ErrNum=%d, ErrMsg=%s", resp.ErrNum, resp.ErrMsg)
-		}
+		testutil.AssertErrCode(t, resp, 409)
 		t.Cleanup(func() {
 			testutil.DeleteEntity(childID)
 			testutil.DeleteEntity(parentID)
@@ -99,9 +97,12 @@ func TestEntity_Delete(t *testing.T) {
 		if err != nil {
 			t.Fatalf("request failed: %v", err)
 		}
-		if resp.ErrNum != 409 && resp.ErrNum != 422 {
-			t.Errorf("expected ErrNum=409 or 422, got ErrNum=%d, ErrMsg=%s", resp.ErrNum, resp.ErrMsg)
+		testutil.AssertErrCode(t, resp, 409)
+		resp, err = testutil.GetClient().Get("/open-api/v1/entities/" + entityID)
+		if err != nil {
+			t.Fatalf("get after conflict failed: %v", err)
 		}
+		testutil.AssertSuccess(t, resp)
 		t.Cleanup(func() {
 			testutil.DeleteAPIKey(apiKeyID)
 			testutil.DeleteEntity(entityID)
