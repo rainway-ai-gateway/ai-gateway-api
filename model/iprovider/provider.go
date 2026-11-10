@@ -231,11 +231,6 @@ func (m *ProviderManager) UpdateProvider(ctx context.Context, name string,
 	param *ProviderParam,
 	syncHooks ...func(ctx context.Context, oldProvider, newProvider *Provider) error) error {
 
-	if err := ValidateProviderParam(param); err != nil {
-		m.recordProviderOperation(ctx, string(ioperlog.ActionUpdate), name, nil, providerParamToMap(param), err)
-		return err
-	}
-
 	var oldProvider *Provider
 	err := m.txn.AtomExecute(ctx, func(ctx context.Context) error {
 		existing, err := m.storager.FetchProvider(ctx, &ProviderFilter{Name: &name})
@@ -247,15 +242,36 @@ func (m *ProviderManager) UpdateProvider(ctx context.Context, name string,
 		}
 		oldProvider = existing
 
-		// Effective consistency: when protocol_paths is omitted, the stored
-		// value must still be consistent with the (possibly shrunk)
-		// model_protocols of this request. ValidateProviderParam only checks
-		// the explicitly provided protocol_paths.
-		effectivePaths := param.ProtocolPaths
-		if effectivePaths == nil {
-			effectivePaths = existing.ProtocolPaths
+		// Preserve the historical default-fill side effect for an explicitly
+		// provided model_endpoint.
+		fillProviderEndpointDefaults(param.ModelEndpoint)
+
+		// Partial-update semantics (providers.md §2.4, issue #322): validate
+		// the effective body — the PATCH param with omitted required and
+		// consistency fields fallen back to the stored values — instead of the
+		// raw partial body. Explicitly provided values (including empty
+		// slices) are validated as-is, so create-time guards keep firing.
+		// Optional fields (Models/Keys/Tiers) are NOT fallen back: their checks
+		// apply only to explicitly provided values, so a legacy provider with
+		// an empty stored models list stays maintainable.
+		effective := *param
+		if effective.InstanceSource == nil && existing.InstanceSource != "" {
+			source := existing.InstanceSource
+			effective.InstanceSource = &source
 		}
-		if err := validateProviderProtocolPaths(effectivePaths, param.ModelProtocols); err != nil {
+		if effective.K8sPoolName == nil {
+			effective.K8sPoolName = existing.K8sPoolName
+		}
+		if effective.ModelProtocols == nil {
+			effective.ModelProtocols = existing.ModelProtocols
+		}
+		if effective.ProtocolPaths == nil {
+			effective.ProtocolPaths = existing.ProtocolPaths
+		}
+		if effective.InstancePool == nil {
+			effective.InstancePool = existing.InstancePool
+		}
+		if err := ValidateProviderParam(&effective); err != nil {
 			return err
 		}
 
@@ -488,6 +504,22 @@ func (m *ProviderManager) ListProviderNames(ctx context.Context) ([]string, erro
 	return names, nil
 }
 
+// fillProviderEndpointDefaults fills schema/URI defaults on a non-nil endpoint.
+// The update path calls this on the raw param before merging so the historical
+// default-fill side effect (previously applied inside ValidateProviderParam on
+// the param itself) is preserved when validation runs on the effective copy.
+func fillProviderEndpointDefaults(ep *ProviderEndpoint) {
+	if ep == nil {
+		return
+	}
+	if ep.Schema == "" {
+		ep.Schema = "https"
+	}
+	if ep.URI == "" {
+		ep.URI = "/v1/models"
+	}
+}
+
 // ValidateProviderParam validates a provider create/update request.
 func ValidateProviderParam(param *ProviderParam) error {
 	if param == nil {
@@ -532,14 +564,9 @@ func ValidateProviderParam(param *ProviderParam) error {
 	}
 
 	if param.ModelEndpoint != nil {
-		if param.ModelEndpoint.Schema == "" {
-			param.ModelEndpoint.Schema = "https"
-		}
+		fillProviderEndpointDefaults(param.ModelEndpoint)
 		if param.ModelEndpoint.Schema != "http" && param.ModelEndpoint.Schema != "https" {
 			return xerror.WrapParamErrorWithMsg("model_endpoint.schema must be http or https")
-		}
-		if param.ModelEndpoint.URI == "" {
-			param.ModelEndpoint.URI = "/v1/models"
 		}
 		if !strings.HasPrefix(param.ModelEndpoint.URI, "/") {
 			return xerror.WrapParamErrorWithMsg("model_endpoint.uri must start with '/'")
