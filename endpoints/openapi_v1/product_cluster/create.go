@@ -128,7 +128,7 @@ func (p *UpsertParam) Validate() error {
 		return err
 	}
 	if p.LLMConfig != nil {
-		return validate.LLMConfig(p.LLMConfig)
+		return icluster_conf.ValidateLLMConfig(p.LLMConfig)
 	}
 	return nil
 }

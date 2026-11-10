@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/rainway-ai-gateway/ai-gateway-api/lib"
+	"github.com/rainway-ai-gateway/ai-gateway-api/lib/validate"
 	"github.com/rainway-ai-gateway/ai-gateway-api/lib/xerror"
 	"github.com/rainway-ai-gateway/ai-gateway-api/model/ioperlog"
 	"github.com/rainway-ai-gateway/ai-gateway-api/model/itxn"
@@ -882,8 +883,8 @@ func validateProviderInstancePool(instances []ProviderInstance) error {
 	comboSet := map[string]struct{}{}
 	hasPositiveWeight := false
 	for i, inst := range instances {
-		if strings.TrimSpace(inst.Addr) == "" {
-			return xerror.WrapParamErrorWithMsg("instance_pool[%d]: instance addr is required", i)
+		if err := validate.Hostname(inst.Addr); err != nil {
+			return xerror.WrapParamErrorWithMsg("instance_pool[%d]: instance addr: %v", i, err)
 		}
 		if inst.Port <= 0 || inst.Port > 65535 {
 			return xerror.WrapParamErrorWithMsg("instance_pool[%d]: instance port must be between 1 and 65535", i)

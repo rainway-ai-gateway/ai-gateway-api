@@ -126,6 +126,62 @@ func TestValidateProviderParam_InstanceSource(t *testing.T) {
 	})
 }
 
+func TestValidateProviderParam_InstancePoolHostname(t *testing.T) {
+	base := func() *ProviderParam {
+		p := validProviderParam()
+		// two instances with weight 0/100, mirroring the E2E repro shape
+		p.InstancePool = []ProviderInstance{
+			{Addr: "api.deepseek.com", Port: 443, Weight: 0},
+			{Addr: "api.anthropic.com", Port: 443, Weight: 100},
+		}
+		return p
+	}
+
+	t.Run("baseline legal hostnames accepted", func(t *testing.T) {
+		require.NoError(t, ValidateProviderParam(base()))
+	})
+
+	invalidAddrs := []struct {
+		name string
+		addr string
+	}{
+		{"issue repro leading hyphen", "-bad"},
+		{"trailing hyphen", "bad-"},
+		{"empty label", "b..d"},
+		{"label too long", strings.Repeat("a", 64)},
+		{"total too long", strings.Repeat("a.", 128) + "ab"},
+		{"single char", "x"},
+		{"whitespace", "bad addr"},
+		{"underscore not in charset", "bad_addr"},
+	}
+	for _, c := range invalidAddrs {
+		t.Run("rejects "+c.name, func(t *testing.T) {
+			param := base()
+			param.InstancePool[0].Addr = c.addr
+			err := ValidateProviderParam(param)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "instance addr")
+		})
+	}
+
+	validAddrs := []struct {
+		name string
+		addr string
+	}{
+		{"hostname", "api.example.com"},
+		{"shortest legal", "a1"},
+		{"ipv4 literal", "1.2.3.4"},
+		{"ipv6 literal", "2001:db8::1"},
+	}
+	for _, c := range validAddrs {
+		t.Run("accepts "+c.name, func(t *testing.T) {
+			param := base()
+			param.InstancePool[0].Addr = c.addr
+			require.NoError(t, ValidateProviderParam(param))
+		})
+	}
+}
+
 func TestFillDefaults_InstanceSource(t *testing.T) {
 	param := &ProviderParam{}
 	FillDefaults(param)
