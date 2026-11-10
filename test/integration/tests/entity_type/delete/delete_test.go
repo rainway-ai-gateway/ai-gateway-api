@@ -88,4 +88,12 @@ func TestEntityType_Delete(t *testing.T) {
 			testutil.DeleteEntityType(typeName)
 		})
 	})
+
+	t.Run("ET-5-003 删除非法名（连字符开头）", func(t *testing.T) {
+		resp, err := testutil.GetClient().Delete("/open-api/v1/entity-types/-a")
+		if err != nil {
+			t.Fatalf("request failed: %v", err)
+		}
+		testutil.AssertErrCode(t, resp, 422)
+	})
 }

@@ -58,6 +58,43 @@ func TestEntityType_Detail(t *testing.T) {
 		testutil.AssertErrCode(t, resp, 404)
 	})
 
+	t.Run("ET-3-003 查询非法名（连字符开头）", func(t *testing.T) {
+		resp, err := testutil.GetClient().Get("/open-api/v1/entity-types/-a")
+		if err != nil {
+			t.Fatalf("request failed: %v", err)
+		}
+		testutil.AssertErrCode(t, resp, 422)
+	})
+
+	t.Run("ET-3-004 查询非法名（连字符结尾）", func(t *testing.T) {
+		resp, err := testutil.GetClient().Get("/open-api/v1/entity-types/a-")
+		if err != nil {
+			t.Fatalf("request failed: %v", err)
+		}
+		testutil.AssertErrCode(t, resp, 422)
+	})
+
+	t.Run("ET-3-005 查询非法名（大写字符）", func(t *testing.T) {
+		resp, err := testutil.GetClient().Get("/open-api/v1/entity-types/A")
+		if err != nil {
+			t.Fatalf("request failed: %v", err)
+		}
+		testutil.AssertErrCode(t, resp, 422)
+	})
+
+	t.Run("ET-3-006 非法名请求无副作用", func(t *testing.T) {
+		resp, err := testutil.GetClient().Get("/open-api/v1/entity-types/-a")
+		if err != nil {
+			t.Fatalf("request failed: %v", err)
+		}
+		testutil.AssertErrCode(t, resp, 422)
+		resp, err = testutil.GetClient().Get("/open-api/v1/entity-types/" + typeName)
+		if err != nil {
+			t.Fatalf("readback failed: %v", err)
+		}
+		testutil.AssertSuccess(t, resp)
+	})
+
 	t.Cleanup(func() {
 		testutil.DeleteEntityType(typeName)
 	})

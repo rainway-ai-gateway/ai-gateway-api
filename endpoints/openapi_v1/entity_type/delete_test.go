@@ -41,6 +41,7 @@ var _ itxn.TxnStorager = (*fakeDeleteTypeTxn)(nil)
 
 type fakeDeleteEntityTypeStorager struct {
 	entityType  *modelentity.EntityTypeParam
+	fetchCalls  int
 	deleteCalls int
 }
 
@@ -49,6 +50,11 @@ func (f *fakeDeleteEntityTypeStorager) CreateEntityType(ctx context.Context, par
 }
 
 func (f *fakeDeleteEntityTypeStorager) FetchEntityType(ctx context.Context, filter *modelentity.EntityTypeFilter) (*modelentity.EntityTypeParam, error) {
+	f.fetchCalls++
+	if f.entityType == nil || filter == nil || filter.TypeName == nil ||
+		f.entityType.TypeName == nil || *filter.TypeName != *f.entityType.TypeName {
+		return nil, nil
+	}
 	return f.entityType, nil
 }
 
@@ -68,7 +74,8 @@ func (f *fakeDeleteEntityTypeStorager) DeleteEntityType(ctx context.Context, fil
 var _ modelentity.EntityTypeStorager = (*fakeDeleteEntityTypeStorager)(nil)
 
 type fakeDeleteRefEntityStorager struct {
-	entities []*modelentity.EntityParam
+	entities      []*modelentity.EntityParam
+	fetchListCalls int
 }
 
 func (f *fakeDeleteRefEntityStorager) CreateEntity(ctx context.Context, param *modelentity.EntityParam) (int64, error) {
@@ -80,6 +87,7 @@ func (f *fakeDeleteRefEntityStorager) FetchEntity(ctx context.Context, filter *m
 }
 
 func (f *fakeDeleteRefEntityStorager) FetchEntityList(ctx context.Context, filter *modelentity.EntityFilter) ([]*modelentity.EntityParam, error) {
+	f.fetchListCalls++
 	if filter.Type != nil {
 		return f.entities, nil
 	}

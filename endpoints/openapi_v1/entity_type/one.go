@@ -17,6 +17,7 @@ package entity_type
 import (
 	"net/http"
 
+	"github.com/rainway-ai-gateway/ai-gateway-api/lib/validate"
 	"github.com/rainway-ai-gateway/ai-gateway-api/lib/xerror"
 	"github.com/rainway-ai-gateway/ai-gateway-api/lib/xreq"
 	"github.com/rainway-ai-gateway/ai-gateway-api/model/entity"
@@ -33,6 +34,11 @@ var EntityTypeOneRoute = &xreq.Endpoint{
 
 type OneReq struct {
 	TypeName *string `uri:"type_name" validate:"required"`
+}
+
+// Validate performs centralized business validation on the URI parameter.
+func (p *OneReq) Validate() error {
+	return validate.EntityTypeName(*p.TypeName)
 }
 
 func EntityTypeOneAction(req *http.Request) (interface{}, error) {
