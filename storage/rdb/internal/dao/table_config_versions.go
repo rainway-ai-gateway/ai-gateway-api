@@ -15,6 +15,7 @@
 package dao
 
 import (
+	"database/sql"
 	"time"
 
 	"github.com/rainway-ai-gateway/ai-gateway-api/lib"
@@ -23,6 +24,13 @@ import (
 )
 
 const tConfigVersionTableName = "config_versions"
+
+// IsMySQL reports whether the context's connection uses the MySQL driver.
+// Lock lifetimes and supported syntax differ per driver (issue #318), so
+// storage-layer concurrency handling branches on it.
+func IsMySQL(dbCtx lib.DBContexter) bool {
+	return isMySQL(dbCtx.Conn())
+}
 
 // TConfigVersion Query Result
 type TConfigVersion struct {
@@ -46,6 +54,40 @@ func TConfigVersionOne(dbCtx lib.DBContexter, where *TConfigVersionParam) (*TCon
 		return nil, nil
 	}
 	return nil, err
+}
+
+// TConfigVersionOneForUpdate pins the exact (name, version) row with a
+// current read. MySQL uses SELECT ... FOR UPDATE with equality on the
+// unique key uk_name_version: a record lock only (no gap locks), and it
+// re-evaluates against the latest committed data, so the duplicate-key
+// retry path inside a REPEATABLE READ transaction sees the concurrent
+// winner's row instead of its stale snapshot (issue #318). Callers must
+// release the failed INSERT's shared locks first (ROLLBACK TO SAVEPOINT),
+// otherwise the upgrade to this exclusive lock deadlocks concurrent losers
+// against each other. Non-MySQL drivers (e.g. SQLite, which does not
+// support FOR UPDATE syntax) fall back to a plain query.
+func TConfigVersionOneForUpdate(dbCtx lib.DBContexter, name, version string) (*TConfigVersion, error) {
+	if !isMySQL(dbCtx.Conn()) {
+		return TConfigVersionOne(dbCtx, &TConfigVersionParam{
+			Name:    &name,
+			Version: &version,
+		})
+	}
+
+	row := dbCtx.Execer().QueryRowContext(dbCtx,
+		"SELECT id, name, data_sign, version, created_at, updated_at "+
+			"FROM config_versions WHERE name = ? AND version = ? FOR UPDATE",
+		name, version)
+
+	t := &TConfigVersion{}
+	err := row.Scan(&t.ID, &t.Name, &t.DataSign, &t.Version, &t.CreatedAt, &t.UpdatedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, xerror.WrapDaoError(err)
+	}
+	return t, nil
 }
 
 // TConfigVersionList Query Multiple

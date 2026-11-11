@@ -21,8 +21,11 @@ import (
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/go-sql-driver/mysql"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/rainway-ai-gateway/ai-gateway-api/lib/xerror"
 )
 
 func TestNewDBContext(t *testing.T) {
@@ -116,6 +119,24 @@ func TestDuplicateEntryError(t *testing.T) {
 	assert.True(t, DuplicateEntryError(errors.New("Error 1062: Duplicate entry 'x'")))
 	assert.True(t, DuplicateEntryError(errors.New("UNIQUE constraint failed")))
 	assert.True(t, DuplicateEntryError(errors.New("duplicate key value violates unique constraint")))
+	// New driver format (with SQLSTATE), as a plain wrapped message.
+	assert.True(t, DuplicateEntryError(errors.New(
+		"Error 1062 (23000): Duplicate entry 'route_rule-1' for key 'config_versions.uk_name_version'")))
+
+	// Real driver error as produced by go-sql-driver/mysql v1.9.x (issue #318).
+	dup := &mysql.MySQLError{
+		Number:   1062,
+		SQLState: [5]byte{'2', '3', '0', '0', '0'},
+		Message:  "Duplicate entry 'x' for key 'uk'",
+	}
+	assert.True(t, DuplicateEntryError(dup))
+	// ... and after DAO-layer wrapping (pkg/errors keeps Unwrap, so
+	// errors.As sees through to the driver error).
+	assert.True(t, DuplicateEntryError(xerror.WrapDaoError(dup)))
+	// Other MySQL error numbers must not be misclassified.
+	other := &mysql.MySQLError{Number: 1146, Message: "Table 't' doesn't exist"}
+	assert.False(t, DuplicateEntryError(other))
+	assert.False(t, DuplicateEntryError(xerror.WrapDaoError(other)))
 }
 
 func TestTransientLockError(t *testing.T) {

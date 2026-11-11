@@ -26,6 +26,10 @@ import (
 const (
 	versionLayout       = "20060102150405"
 	maxDuplicateRetries = 3
+
+	// dupRetrySavepoint bounds the shared next-key lock lifetime of a
+	// failed version INSERT (see the retry loop).
+	dupRetrySavepoint = "vc_version_dup_retry"
 )
 
 var _ iversion_control.VersionControlStorager = &VersionControlStorager{}
@@ -60,33 +64,71 @@ func (vcs *VersionControlStorager) UpsertConfigLastExportedVersion(ctx context.C
 		version = bumpVersion(latest.Version, version)
 	}
 
+	// Under MySQL's REPEATABLE READ, a failed INSERT's duplicate check
+	// leaves a shared next-key lock held to transaction end, and the
+	// exclusive pin below would deadlock concurrent losers against each
+	// other; a savepoint bounds that lock's lifetime (issue #318). Outside
+	// a transaction (autocommit) the lock dies with the statement anyway,
+	// and non-MySQL drivers have different lock semantics, so the
+	// savepoint dance is MySQL-in-transaction only.
+	useSavepoint := dbCtx.InTx() && dao.IsMySQL(dbCtx)
+
 	for i := 0; i < maxDuplicateRetries; i++ {
+		if useSavepoint {
+			if _, err = dbCtx.Execer().ExecContext(dbCtx,
+				"SAVEPOINT "+dupRetrySavepoint); err != nil {
+				return "", err
+			}
+		}
+
 		_, err = dao.TConfigVersionCreate(dbCtx, &dao.TConfigVersionParam{
 			Name:     &css.Topic,
 			DataSign: &css.DataSignWithoutVersion,
 			Version:  &version,
 		})
 		if err == nil {
+			if useSavepoint {
+				if _, err = dbCtx.Execer().ExecContext(dbCtx,
+					"RELEASE SAVEPOINT "+dupRetrySavepoint); err != nil {
+					return "", err
+				}
+			}
 			return version, nil
 		}
 		if !lib.DuplicateEntryError(err) {
 			return "", err
 		}
 
-		// A concurrent export inserted the same version first: re-read the
-		// latest row and bump past it, instead of failing the whole export
-		// with a duplicate key error (issue #142).
-		latest, err = latestConfigVersion(dbCtx, css.Topic)
+		// Drop the failed insert and, on MySQL, its shared locks.
+		if useSavepoint {
+			if _, err = dbCtx.Execer().ExecContext(dbCtx,
+				"ROLLBACK TO SAVEPOINT "+dupRetrySavepoint); err != nil {
+				return "", err
+			}
+		}
+
+		// A concurrent export inserted the same version first: pin the row
+		// we collided with and either reuse its version (same content,
+		// design line 421) or bump strictly past it, instead of failing
+		// the whole export with a duplicate key error (issues #142, #318).
+		//
+		// The pin is a current read (SELECT ... FOR UPDATE on MySQL):
+		// equality on the unique key takes a record lock only and sees the
+		// winner's committed row instead of this transaction's stale
+		// REPEATABLE READ snapshot — a plain re-read would make
+		// bumpVersion return the already-attempted version and spin on the
+		// same duplicate key.
+		winner, err := dao.TConfigVersionOneForUpdate(dbCtx, css.Topic, version)
 		if err != nil {
 			return "", err
 		}
-		if latest == nil {
+		if winner == nil {
 			return "", err
 		}
-		if latest.DataSign == css.DataSignWithoutVersion {
-			return latest.Version, nil
+		if winner.DataSign == css.DataSignWithoutVersion {
+			return winner.Version, nil
 		}
-		version = bumpVersion(latest.Version, version)
+		version = bumpVersion(winner.Version, version)
 	}
 
 	return "", err
