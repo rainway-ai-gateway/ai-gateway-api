@@ -17,7 +17,10 @@ package lib
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"strings"
+
+	"github.com/go-sql-driver/mysql"
 )
 
 type DBContexter interface {
@@ -28,6 +31,11 @@ type DBContexter interface {
 	// must go through Execer so AtomExecute closures actually run in the
 	// transaction instead of autocommitting through the pool.
 	Execer() SqlExecutor
+	// InTx reports whether the context runs inside an open transaction.
+	// Statement-level lock lifetimes (e.g. a failed INSERT's shared lock
+	// under REPEATABLE READ) only span the transaction, so lock-releasing
+	// tricks like savepoints are needed only when InTx is true.
+	InTx() bool
 }
 
 // SqlExecutor is the common statement-execution surface implemented by
@@ -63,6 +71,11 @@ func (ctx *DBContext) Execer() SqlExecutor {
 		return ctx.tx
 	}
 	return ctx.conn
+}
+
+// InTx reports whether the context runs inside an open transaction.
+func (ctx *DBContext) InTx() bool {
+	return ctx.tx != nil
 }
 
 func (ctx *DBContext) BeginTrans() error {
@@ -159,10 +172,22 @@ func DuplicateEntryError(err error) bool {
 	if err == nil {
 		return false
 	}
+	// go-sql-driver/mysql (v1.7.0+) formats MySQLError.Error() as
+	// "Error 1062 (23000): Duplicate entry ..."; the legacy substring
+	// "Error 1062: Duplicate entry" never matches it, so the duplicate-key
+	// retry path never ran and the whole export failed with HTTP 500
+	// (issue #318). Match the concrete error number first; the message
+	// fallbacks below keep working when the error chain has been re-wrapped
+	// without Unwrap.
+	var mysqlErr *mysql.MySQLError
+	if errors.As(err, &mysqlErr) {
+		return mysqlErr.Number == 1062
+	}
 	msg := err.Error()
-	return strings.Contains(msg, "Error 1062: Duplicate entry") ||
-		strings.Contains(msg, "UNIQUE constraint failed") ||
-		strings.Contains(msg, "duplicate key value violates unique constraint")
+	return strings.Contains(msg, "UNIQUE constraint failed") || // SQLite
+		strings.Contains(msg, "duplicate key value violates unique constraint") || // Postgres
+		strings.Contains(msg, "Error 1062:") || // legacy driver format
+		strings.Contains(msg, "Error 1062 (") // driver format with SQLSTATE
 }
 
 // TransientLockError reports whether err is a retryable lock conflict:

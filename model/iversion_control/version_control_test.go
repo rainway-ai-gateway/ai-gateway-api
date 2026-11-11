@@ -20,13 +20,36 @@ import (
 	"testing"
 	"time"
 
+	"github.com/go-sql-driver/mysql"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/rainway-ai-gateway/ai-gateway-api/lib/xerror"
 )
 
 type fakeTxn struct{}
 
 func (f *fakeTxn) AtomExecute(ctx context.Context, do func(context.Context) error) error {
+	return do(ctx)
+}
+
+// flakyTxn fails the whole transaction with a transient lock error (MySQL
+// 1213 wrapped by the DAO layer, as issue #318's gap-lock deadlock produces)
+// a bounded number of times before delegating, to verify that ExportConfig
+// replays the transaction instead of surfacing a 500.
+type flakyTxn struct {
+	failures int
+	calls    int
+}
+
+func (f *flakyTxn) AtomExecute(ctx context.Context, do func(context.Context) error) error {
+	f.calls++
+	if f.calls <= f.failures {
+		return xerror.WrapDaoError(&mysql.MySQLError{
+			Number:  1213,
+			Message: "Deadlock found when trying to get lock; try restarting transaction",
+		})
+	}
 	return do(ctx)
 }
 
@@ -193,6 +216,103 @@ func TestVersionControlManager_ExportConfig(t *testing.T) {
 		_, err := m.ExportConfig(ctx, "test-topic", generator)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "upsert failed")
+	})
+
+	t.Run("storager duplicate key exhausted becomes conflict", func(t *testing.T) {
+		// Issue #318: after the duplicate-key retries are exhausted, the
+		// export must fail with a distinguishable 409 Conflict instead of an
+		// indistinguishable 500 Database Exception.
+		dup := &mysql.MySQLError{
+			Number:   1062,
+			SQLState: [5]byte{'2', '3', '0', '0', '0'},
+			Message:  "Duplicate entry 'route_rule-1' for key 'config_versions.uk_name_version'",
+		}
+		storager := &fakeVersionControlStorager{
+			upsertFn: func(ctx context.Context, css *ExportData) (string, error) {
+				return "", xerror.WrapDaoError(dup)
+			},
+		}
+		m := NewVersionControllerManager(&fakeTxn{}, storager)
+		generator := func(ctx context.Context) (*ExportData, error) {
+			return &ExportData{
+				Topic:              "test-topic",
+				DataWithoutVersion: &fakeVersionValuable{},
+			}, nil
+		}
+
+		_, err := m.ExportConfig(ctx, "test-topic", generator)
+		require.Error(t, err)
+		rr := xerror.Resolve(err)
+		assert.Equal(t, 409, rr.ErrNo)
+		assert.Equal(t, "Conflict", rr.Type)
+	})
+
+	t.Run("storager transient lock error is retried", func(t *testing.T) {
+		// Issue #318: concurrent exports can deadlock on the version row
+		// (1213). The whole export transaction must be replayed instead of
+		// surfacing a 500; the generator and the upsert are idempotent.
+		txn := &flakyTxn{failures: 1}
+		storager := &fakeVersionControlStorager{
+			upsertFn: func(ctx context.Context, css *ExportData) (string, error) {
+				return "20240102000000", nil
+			},
+		}
+		m := NewVersionControllerManager(txn, storager)
+		generator := func(ctx context.Context) (*ExportData, error) {
+			return &ExportData{
+				Topic:              "test-topic",
+				DataWithoutVersion: &fakeVersionValuable{},
+			}, nil
+		}
+
+		result, err := m.ExportConfig(ctx, "test-topic", generator)
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		assert.Equal(t, "20240102000000", result.version)
+		assert.Equal(t, 2, txn.calls)
+	})
+
+	t.Run("storager persistent deadlock becomes conflict", func(t *testing.T) {
+		txn := &flakyTxn{failures: 10}
+		storager := &fakeVersionControlStorager{
+			upsertFn: func(ctx context.Context, css *ExportData) (string, error) {
+				return "20240102000000", nil
+			},
+		}
+		m := NewVersionControllerManager(txn, storager)
+		generator := func(ctx context.Context) (*ExportData, error) {
+			return &ExportData{
+				Topic:              "test-topic",
+				DataWithoutVersion: &fakeVersionValuable{},
+			}, nil
+		}
+
+		_, err := m.ExportConfig(ctx, "test-topic", generator)
+		require.Error(t, err)
+		rr := xerror.Resolve(err)
+		assert.Equal(t, 409, rr.ErrNo)
+		assert.Equal(t, "Conflict", rr.Type)
+	})
+
+	t.Run("storager non duplicate error keeps semantics", func(t *testing.T) {
+		storager := &fakeVersionControlStorager{
+			upsertFn: func(ctx context.Context, css *ExportData) (string, error) {
+				return "", errors.New("upsert failed")
+			},
+		}
+		m := NewVersionControllerManager(&fakeTxn{}, storager)
+		generator := func(ctx context.Context) (*ExportData, error) {
+			return &ExportData{
+				Topic:              "test-topic",
+				DataWithoutVersion: &fakeVersionValuable{},
+			}, nil
+		}
+
+		_, err := m.ExportConfig(ctx, "test-topic", generator)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "upsert failed")
+		rr := xerror.Resolve(err)
+		assert.NotEqual(t, 409, rr.ErrNo)
 	})
 
 	t.Run("update real version error", func(t *testing.T) {

@@ -18,6 +18,8 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -271,4 +273,145 @@ func TestLatestConfigVersion_OrdersByVersionThenIDDesc(t *testing.T) {
 	latest, err = latestConfigVersion(dbCtx, "topic-none")
 	require.NoError(t, err)
 	assert.Nil(t, latest)
+}
+
+// setupFileVersionControlTestDB opens two handles to a file-based SQLite
+// database: db feeds the storager, blocker is a second handle used to hold
+// an uncommitted "winner" row so the storager's first read misses it. Both
+// handles are limited to a single connection each so the busy_timeout pragma
+// applies to every pooled connection.
+func setupFileVersionControlTestDB(t *testing.T) (db, blocker *sql.DB, factory lib.DBContextFactory) {
+	path := filepath.Join(t.TempDir(), "vc_test.db")
+	open := func() *sql.DB {
+		h, err := sql.Open("sqlite", "file:"+path+"?_pragma=busy_timeout(3000)")
+		require.NoError(t, err)
+		h.SetMaxOpenConns(1)
+		_, err = h.Exec(`
+CREATE TABLE IF NOT EXISTS config_versions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  data_sign TEXT NOT NULL,
+  version TEXT NOT NULL,
+  created_at DATETIME NOT NULL,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE (name, version)
+);`)
+		require.NoError(t, err)
+		t.Cleanup(func() { h.Close() })
+		return h
+	}
+	db = open()
+	blocker = open()
+
+	oldConfig := stateful.DefaultConfig
+	stateful.DefaultConfig = &stateful.Config{
+		RunTime: stateful.RunTimeConfig{
+			RecordSQL: false,
+		},
+	}
+	t.Cleanup(func() { stateful.DefaultConfig = oldConfig })
+
+	// Same pass-through semantics as stateful.NewBFEDBContext: when the
+	// caller context already carries a DBContext, reuse it.
+	factory = func(ctx context.Context, ops ...*lib.Op) (*lib.DBContext, error) {
+		if dc, ok := ctx.(*lib.DBContext); ok {
+			return dc, nil
+		}
+		return lib.NewDBContext(ctx, db), nil
+	}
+	return db, blocker, factory
+}
+
+type upsertResult struct {
+	version string
+	err     error
+}
+
+// upsertAgainstUncommittedWinner reproduces the issue #318 retry entry
+// condition on SQLite: a winner row for (topic, winnerSign, winnerVersion)
+// is inserted through the blocker connection but left uncommitted, so the
+// storager's first read misses it while its first insert — same (name,
+// version) candidate — blocks on the write lock. Committing the blocker
+// transaction afterwards makes that insert fail with a unique constraint
+// error, entering the duplicate-key retry path.
+func upsertAgainstUncommittedWinner(t *testing.T, blocker *sql.DB, factory lib.DBContextFactory,
+	topic, winnerSign, winnerVersion, upsertSign string) upsertResult {
+	tx, err := blocker.Begin()
+	require.NoError(t, err)
+	_, err = tx.Exec(
+		"INSERT INTO config_versions (name, data_sign, version, created_at) VALUES (?, ?, ?, ?)",
+		topic, winnerSign, winnerVersion, time.Now())
+	require.NoError(t, err)
+
+	result := make(chan upsertResult, 1)
+	go func() {
+		vcs := NewVersionControllerStorage(factory)
+		version, err := vcs.UpsertConfigLastExportedVersion(context.Background(), exportData(topic, upsertSign))
+		result <- upsertResult{version: version, err: err}
+	}()
+
+	// Give the goroutine time to pass its first read and reach the blocked
+	// insert, then release the winner row.
+	time.Sleep(200 * time.Millisecond)
+	require.NoError(t, tx.Commit())
+
+	got := <-result
+	require.NoError(t, got.err)
+	return got
+}
+
+// Issue #318 / design line 421: when a concurrent export already created a
+// version for the same content, the loser of the (name, version) race must
+// return the winner's version instead of failing or creating a redundant
+// row.
+func TestUpsertConfigLastExportedVersion_RetryReturnsWinnerVersion(t *testing.T) {
+	db, blocker, factory := setupFileVersionControlTestDB(t)
+
+	for attempt := 0; attempt < 3; attempt++ {
+		topic := fmt.Sprintf("topic-retry-same-%d", attempt)
+		winner := iversion_control.Version(time.Now())
+
+		got := upsertAgainstUncommittedWinner(t, blocker, factory, topic, "sign-a", winner, "sign-a")
+
+		// A second rollover between the winner insert and the candidate
+		// computation makes the insert skip the collision; retry on a fresh
+		// topic instead of flaking.
+		if got.version != winner {
+			continue
+		}
+		assert.Equal(t, winner, got.version)
+		assert.Equal(t, []string{winner}, listVersions(t, db, topic),
+			"loser must reuse the winner version row, not create a new one")
+		return
+	}
+	t.Fatal("no attempt hit the duplicate-key retry path")
+}
+
+// Issue #318 / design line 97: when the winner's content differs, the loser
+// must bump strictly past the winner's version and succeed.
+func TestUpsertConfigLastExportedVersion_RetryBumpsPastWinner(t *testing.T) {
+	db, blocker, factory := setupFileVersionControlTestDB(t)
+
+	for attempt := 0; attempt < 3; attempt++ {
+		topic := fmt.Sprintf("topic-retry-diff-%d", attempt)
+		winner := iversion_control.Version(time.Now())
+
+		got := upsertAgainstUncommittedWinner(t, blocker, factory, topic, "sign-a", winner, "sign-b")
+
+		wt, err := time.ParseInLocation(versionLayout, winner, time.Local)
+		require.NoError(t, err)
+		bumped := iversion_control.Version(wt.Add(time.Second))
+
+		// Same second-rollover escape as the same-sign test: without the
+		// collision the export succeeds directly at the bumped version, so
+		// only an unexpected result needs a retry.
+		if got.version != bumped {
+			continue
+		}
+		assert.Equal(t, bumped, got.version)
+		assert.Equal(t, []string{winner, bumped}, listVersions(t, db, topic),
+			"winner row kept, loser row appended with a strictly greater version")
+		return
+	}
+	t.Fatal("no attempt hit the duplicate-key retry path")
 }
