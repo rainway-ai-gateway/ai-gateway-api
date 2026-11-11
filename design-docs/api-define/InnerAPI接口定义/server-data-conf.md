@@ -313,7 +313,7 @@ curl -X GET "http://api-server:port/inner-api/v1/configs/tls_conf/server_data_co
 | `EPPCheck.SuccessThreshold` | int | `check.success_threshold`，默认 `2` |
 | `EPPTimeout` | object | 来源 OpenAPI `epp_runtime.timeout`；**未配置 `epp_runtime` 时不下发**，由 BFE 加载期补默认 |
 | `EPPTimeout.Connect` | string | `timeout.connect`，默认 `500ms` |
-| `EPPTimeout.Call` | string | `timeout.call`，默认 `3s` |
+| `EPPTimeout.Call` | string | `timeout.call`，默认 `11s` |
 | `EPPBreaker` | object | **固定** `{ "Disabled": true }`（关闭熔断）；`WindowSize`/`MinVolume`/`ErrorRatePercent`/`OpenTimeout` 不下发 |
 
 > **说明**：

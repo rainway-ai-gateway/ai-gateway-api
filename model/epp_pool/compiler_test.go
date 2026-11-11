@@ -311,6 +311,21 @@ func TestCompileEppConfig_FlowControlMaxRequestsOmitted(t *testing.T) {
 	assert.Equal(t, defaultPriorityBandMaxRequests, conf.FlowControl.PriorityBands[0].MaxRequests)
 }
 
+func TestCompileEppConfig_FlowControlDefaultTTL(t *testing.T) {
+	// flow_control 存在但未配 queue_ttl：显式补默认 9s（不再回落 llm-d 的 60s，
+	// 否则 60s 会大于 epp_runtime 调用超时默认 11s，默认组合不满足 call > max(TTL)）
+	conf := CompileEppConfig("cluster-a", &EppConfigSimplified{
+		FlowControl: &FlowControlSimplified{MaxRequests: lib.PInt(100)},
+	})
+	assert.Equal(t, "9s", conf.FlowControl.DefaultRequestTTL)
+	assert.Equal(t, "9s", conf.FlowControl.NoEndpointRequestTTL)
+
+	// flow_control 整体缺省：不补 TTL（feature gate 关闭，无排队/背压语义）
+	conf = CompileEppConfig("cluster-a", &EppConfigSimplified{})
+	assert.Empty(t, conf.FlowControl.DefaultRequestTTL)
+	assert.Empty(t, conf.FlowControl.NoEndpointRequestTTL)
+}
+
 func TestCompileEppConfig_FlowControlZeroTTL(t *testing.T) {
 	conf := CompileEppConfig("cluster-a", &EppConfigSimplified{
 		FlowControl: &FlowControlSimplified{QueueTTL: lib.PInt(0)},

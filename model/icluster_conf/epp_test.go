@@ -557,7 +557,7 @@ func TestClusterManager_CreateCluster_EppRuntime(t *testing.T) {
 		})
 		require.NoError(t, err)
 		require.NotNil(t, captured)
-		assert.JSONEq(t, `{"timeout":{"connect":"1s","call":"3s"}}`, *captured)
+		assert.JSONEq(t, `{"timeout":{"connect":"1s","call":"11s"}}`, *captured)
 	})
 
 	t.Run("WRR keeps dormant epp_runtime and validates it", func(t *testing.T) {
