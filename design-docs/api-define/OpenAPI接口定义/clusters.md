@@ -121,7 +121,7 @@
         },
         "timeout": {
             "connect": "500ms",
-            "call": "3s"
+            "call": "11s"
         }
     },
     "llm_config": {
@@ -275,8 +275,8 @@
 | 参数名 | 类型 | 参数含义 | 必填 | 补充描述 | 合法性条件 |
 | - | -  | - | - | - | - |
 | max_requests | int | 全局并发上限（跨全部优先级带）；`-1` 为显式"不限"（更新时用于明确恢复不限） | N | 缺省表示不限；`-1` 也表示不限 | 非必填；若传入，取值 `>0` 或 `-1` |
-| queue_ttl | int | 池**有端点**时的排队预算（**单位：秒**），超期以可重试背压错误拒绝 | N | 缺省由 EPP 决定（llm-d 默认 60 秒）；`0` 为显式禁用驱逐 | 非必填；取值 ≥ 0 的整数 |
-| no_endpoint_queue_ttl | int | 池**无端点**（冷启动扩容）时的排队预算（**单位：秒**），regime 切换时重新起算 | N | 默认值为跟随 `queue_ttl` | 非必填；同 `queue_ttl` |
+| queue_ttl | int | 池**有端点**时的排队预算（**单位：秒**），超期以可重试背压错误拒绝 | N | 缺省 **9 秒**（由 api 在下发配置中显式补齐）；`0` 为显式禁用驱逐 | 非必填；取值 ≥ 0 的整数 |
+| no_endpoint_queue_ttl | int | 池**无端点**（冷启动扩容）时的排队预算（**单位：秒**），regime 切换时重新起算 | N | 默认跟随 `queue_ttl`（缺省同为 **9 秒**） | 非必填；同 `queue_ttl` |
 | enable_eviction | bool | 需求驱动驱逐：高优先级被饱和阻塞时终止负优先级在飞请求回收容量 | N | **当前 EPP 未接线，请保持 `false`**；编译产物不下发该字段 | 非必填；默认值为 `false`；**建议仅允许 `false`（`true` 拒绝）** |
 
 **表：EPP运行时配置（`epp_runtime`）**
@@ -293,7 +293,7 @@
 | check.success_threshold | int | 连续成功次数阈值（达到后切回高优先级地址） | N | 对应 `EPPCheck.SuccessThreshold` | 非必填；默认 `2`；须为 `>=1` 的整数 |
 | timeout | object | EPP 调用超时 | N | 对应 BFE `GslbBasic.EPPTimeout` | 非必填；若传入，子字段见本表 |
 | timeout.connect | string | 建立 gRPC 连接/流超时，duration 字符串 | N | 对应 `EPPTimeout.Connect` | 非必填；默认 `500ms`；须为 `>0` 的合法 duration |
-| timeout.call | string | 首条消息（RequestHeaders 收发）超时，duration 字符串 | N | 对应 `EPPTimeout.Call` | 非必填；默认 `3s`；须为 `>0` 的合法 duration |
+| timeout.call | string | 首条消息（RequestHeaders 收发）超时，duration 字符串 | N | 对应 `EPPTimeout.Call`；须大于 `max(queue_ttl, no_endpoint_queue_ttl)`，默认值与 `queue_ttl` 默认 9s 搭配（11 > 9） | 非必填；默认 `11s`；须为 `>0` 的合法 duration |
 
 > **固定下发（不可配置）**：
 > - `EPPTLS`：恒为 `{ "Plaintext": true }`（统一明文接入 EPP），取代 BFE legacy `{Insecure:true}` 默认。
@@ -508,7 +508,7 @@
         },
         "timeout": {
             "connect": "500ms",
-            "call": "3s"
+            "call": "11s"
         }
     }
 }
