@@ -638,6 +638,9 @@ func RouteRules(p *shared.RouteRulesParam) error {
 
 	nameSet := map[string]struct{}{}
 	for _, rule := range p.Rules {
+		if rule == nil {
+			return xerror.WrapParamErrorWithMsg("route rule element cannot be null")
+		}
 		if rule.Name == nil || *rule.Name == "" {
 			return xerror.WrapParamErrorWithMsg("route rule name is required")
 		}
@@ -660,6 +663,9 @@ func RouteRules(p *shared.RouteRulesParam) error {
 		totalWeight := 0
 		targetKeySet := map[string]struct{}{}
 		for _, target := range rule.Targets {
+			if target == nil {
+				return xerror.WrapParamErrorWithMsg("target element cannot be null")
+			}
 			if target.Weight == nil {
 				return xerror.WrapParamErrorWithMsg("target weight is required")
 			}
@@ -695,6 +701,9 @@ func RouteRules(p *shared.RouteRulesParam) error {
 
 		fallbackKeySet := map[string]struct{}{}
 		for _, fallback := range rule.Fallbacks {
+			if fallback == nil {
+				return xerror.WrapParamErrorWithMsg("fallback element cannot be null")
+			}
 			if fallback.ClusterName == nil || *fallback.ClusterName == "" {
 				return xerror.WrapParamErrorWithMsg("fallback ClusterName is required")
 			}

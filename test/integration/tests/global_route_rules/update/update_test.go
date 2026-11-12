@@ -223,6 +223,22 @@ func TestGlobalRouteRules_Update(t *testing.T) {
 			},
 			wantCode: 422,
 		},
+		{
+			name: "GRR-1-011 targets 含 null 元素",
+			body: map[string]interface{}{
+				"rules": []interface{}{
+					map[string]interface{}{
+						"name": "null-target",
+						"cond": "default_t()",
+						"targets": []interface{}{
+							map[string]interface{}{"cluster_name": "c1", "weight": 100},
+							nil,
+						},
+					},
+				},
+			},
+			wantCode: 422,
+		},
 	}
 
 	for _, tt := range tests {
