@@ -206,6 +206,23 @@ func TestGlobalRouteRules_Update(t *testing.T) {
 			},
 			wantCode: 422,
 		},
+		{
+			name: "GRR-1-010 重复 fallback (ClusterName+Model)",
+			body: map[string]interface{}{
+				"rules": []interface{}{
+					map[string]interface{}{
+						"name":    "dup-fallback",
+						"cond":    "default_t()",
+						"targets": []interface{}{map[string]interface{}{"cluster_name": "c1", "model": "m1", "weight": 100}},
+						"fallbacks": []interface{}{
+							map[string]interface{}{"cluster_name": "c2", "model": "m2"},
+							map[string]interface{}{"cluster_name": "c2", "model": "m2"},
+						},
+					},
+				},
+			},
+			wantCode: 422,
+		},
 	}
 
 	for _, tt := range tests {
