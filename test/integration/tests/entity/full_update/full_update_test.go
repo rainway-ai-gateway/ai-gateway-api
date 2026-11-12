@@ -442,6 +442,36 @@ func TestEntity_FullUpdate(t *testing.T) {
 		testutil.AssertErrCode(t, resp, 422)
 	})
 
+	t.Run("E-4-012 全量更新携带重复 route rule target 拒绝", func(t *testing.T) {
+		resp, err := testutil.GetClient().Put("/open-api/v1/entities/"+entityID, map[string]interface{}{
+			"name":         testutil.UniqueEntityName(),
+			"type":         typeName,
+			"allow_models": []string{"*"},
+			"block_models": []string{},
+			"quota_plan":   map[string]interface{}{"unlimited": true},
+			"rate_limit_policy": map[string]interface{}{
+				"enabled": false,
+			},
+			"route_rules": map[string]interface{}{
+				"enabled": true,
+				"rules": []interface{}{
+					map[string]interface{}{
+						"name": "dup-target",
+						"cond": "default_t()",
+						"targets": []interface{}{
+							map[string]interface{}{"cluster_name": "c1", "model": "m1", "weight": 50},
+							map[string]interface{}{"cluster_name": "c1", "model": "m1", "weight": 50},
+						},
+					},
+				},
+			},
+		})
+		if err != nil {
+			t.Fatalf("request failed: %v", err)
+		}
+		testutil.AssertErrCode(t, resp, 422)
+	})
+
 	t.Cleanup(func() {
 		testutil.DeleteEntity(entityID)
 		testutil.DeleteEntityType(typeName)

@@ -451,6 +451,49 @@ func TestRouteRules(t *testing.T) {
 	assert.Error(t, RouteRules(rules))
 }
 
+func TestRouteRules_NilElements(t *testing.T) {
+	name := "r1"
+	cluster := "cluster_1"
+	weight := 100
+	validCond := "default_t()"
+
+	assert.NotPanics(t, func() {
+		// nil rule element: rejected with 422, not a panic
+		err := RouteRules(&shared.RouteRulesParam{
+			Rules: []*shared.AiRouteRuleParam{nil},
+		})
+		assert.Error(t, err)
+
+		validRule := func() *shared.AiRouteRuleParam {
+			return &shared.AiRouteRuleParam{
+				Name:    &name,
+				Cond:    &validCond,
+				Targets: []*shared.AiRouteTargetParam{{ClusterName: &cluster, Weight: &weight}},
+			}
+		}
+
+		// nil target element: rejected with 422, not a panic
+		rule := validRule()
+		rule.Targets = append(rule.Targets, nil)
+		assert.Error(t, RouteRules(&shared.RouteRulesParam{Rules: []*shared.AiRouteRuleParam{rule}}))
+
+		// all-nil targets: rejected, not a panic
+		rule = validRule()
+		rule.Targets = []*shared.AiRouteTargetParam{nil}
+		assert.Error(t, RouteRules(&shared.RouteRulesParam{Rules: []*shared.AiRouteRuleParam{rule}}))
+
+		// nil fallback element: rejected with 422, not a panic
+		rule = validRule()
+		rule.Fallbacks = []*shared.AiRouteFallbackParam{{ClusterName: &cluster}, nil}
+		assert.Error(t, RouteRules(&shared.RouteRulesParam{Rules: []*shared.AiRouteRuleParam{rule}}))
+
+		// all-nil fallbacks: rejected, not a panic
+		rule = validRule()
+		rule.Fallbacks = []*shared.AiRouteFallbackParam{nil}
+		assert.Error(t, RouteRules(&shared.RouteRulesParam{Rules: []*shared.AiRouteRuleParam{rule}}))
+	})
+}
+
 func TestConditionExpression(t *testing.T) {
 	cases := []struct {
 		name    string

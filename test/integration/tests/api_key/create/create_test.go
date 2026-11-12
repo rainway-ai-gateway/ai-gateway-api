@@ -243,6 +243,26 @@ func TestAPIKey_Create(t *testing.T) {
 			},
 			wantCode: 422,
 		},
+		{
+			name: "AK-1-013 route_rules 重复 target (ClusterName+Model)",
+			body: map[string]interface{}{
+				"description": "test-key-dup-target",
+				"route_rules": map[string]interface{}{
+					"enabled": true,
+					"rules": []interface{}{
+						map[string]interface{}{
+							"name": "dup-target",
+							"cond": "default_t()",
+							"targets": []interface{}{
+								map[string]interface{}{"cluster_name": "c1", "model": "m1", "weight": 50},
+								map[string]interface{}{"cluster_name": "c1", "model": "m1", "weight": 50},
+							},
+						},
+					},
+				},
+			},
+			wantCode: 422,
+		},
 	}
 
 	for _, tt := range tests {

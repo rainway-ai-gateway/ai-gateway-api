@@ -167,7 +167,8 @@
 
 `targets` 跨元素约束：
 
-- 同一 `targets` 数组内，`(cluster_name, model)` 组合不能重复。
+- 同一 `targets` 数组内，`(cluster_name, model)` 组合不能重复；违反时接口返回 422 `Param Illegal`，错误信息指明重复的组合。
+- 判重时 `model` 按最终值比较：`model` 为空字符串与未填写（缺省）等价，均表示透传原始模型，参与判重。
 
 `fallbacks` 元素结构：
 
@@ -175,6 +176,11 @@
 |------|------|------|------|------------|
 | `cluster_name` | string | Y | 后端集群名称 | 必填；类型为 [ClusterName](#15-集群名称clustername)；须为 `/clusters` 中已存在的集群名称 |
 | `model` | string | N | 模型名称；空字符串表示透传原始模型 | 非空时，须为对应集群 `llm_config.models` 中已配置的模型名称 |
+
+`fallbacks` 跨元素约束与口径：
+
+- 同一 `fallbacks` 数组内，`(cluster_name, model)` 组合不能重复（判重口径同 `targets`：按最终值比较，空串与未填写等价）；重复项没有语义价值、只会浪费降级预算，违反时接口返回 422 `Param Illegal`。
+- `targets` 与 `fallbacks` 之间**允许**出现重复的 `(cluster_name, model)` 组合（如 fallback 指向主 target 的同集群固定模型，属合理降级配置），控制面不做跨组判重。
 
 示例：
 
