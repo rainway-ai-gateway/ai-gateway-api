@@ -9,6 +9,30 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.1.0] - 2026-11-14
+
+### Added
+- `llm_config.ensure_reasoning_content` cluster config: the model access protocols for which the gateway fills an empty `reasoning_content` on assistant messages after the last user message (pairs with `AIConf.EnsureReasoningContent` in BFE v1.9.0); also removes the `bfe_tls` dependency in favor of stdlib `crypto/tls` and closes the provider protocol-narrowing gap.
+- Key-affinity penalty duration configuration: `llm_config.key_affinity` gains `penalty_ttl_429` / `penalty_ttl_auth` (seconds, issue #1448), paired with the configurable AI upstream key penalty in BFE v1.9.0.
+- Missing-price action and signals: `llm_config.price_miss_action` (`fallback_chat` default / `bill_zero` / `reject`, validated against the same enum as BFE `AIConfCheck`, exported as `AIConf.PriceMissAction`, issue #1479); report detail gains the `ai_price_miss` / `ai_price_warn` columns with an exact `price_warn` filter (whitelist-validated).
+- Unpaginated full-list responses: `/entities` and `/entity-types` return the complete list when pagination parameters are absent.
+
+### Changed
+- Upgrade data-plane dependency `github.com/bfenetworks/bfe` to the formal v1.9.0 release; the temporary `replace` to a fork pseudo-version of the v1.9.0-dev branch is removed (the fork commit is contained in the release).
+- EPP default timeout parameters made self-consistent: `queue_ttl` 9s / `timeout.call` 11s.
+
+### Fixed
+- Report overview/timeseries TTFT/TPOT converge to the streaming caliber (only `ai_stream=1` rows), identical to the Doris / StarRocks / ClickHouse aggregate rebuilds, so mixed-traffic averages match the observability backends (issue #315).
+- Quota: the used-quota derivation no longer clamps at zero — overage beyond the plan is reported as-is (issue #1476).
+- List endpoints backfill default pagination (page 1, size 20) when pagination parameters are absent, with `total` computed against the filter (issue #303).
+- HTTP layer: 405 responses now carry an `Allow` header listing the methods actually supported on the path (issue #297); CORS preflight and the Req-ID header now also cover router-level 404/405 responses (issue #298).
+- Rule-set whole-replace (PUT on rule collections) is serialized per resource — concurrent conflicting writes return 409 instead of racing (issue #295).
+- Validation hardening: RMB quota decimal places counted by decimal representation, not binary (issue #293); description length limits unified to UTF-8 bytes across domains (issue #310); name-charset validation on refer-by-name endpoints returns 422 for illegal names (issue #308); provider / model / base_model gain 1-255 length validation (issue #309); `instance_pool[].addr` gains hostname validation (issue #321); cluster and entity-type GET/DELETE by-name endpoints validate the name from the URI (issues #311/#320); entity-type `PATCH level` gains 1-5 validation with hierarchy-consistency protection (issue #313).
+- Conflict semantics: deleting an Entity-Type still referenced by Entities returns 409 (issue #319); deleting an Entity still mounted by API keys returns 409 (issue #316).
+- Provider `PATCH` partial updates validate the merged object instead of the raw patch body (issue #322).
+- Same-second concurrent config exports absorb the `uk_name_version` unique-key conflict instead of failing the whole request with 500 (issue #318).
+- RouteRules rejects `null` elements in `rules` / `targets` / `fallbacks` instead of returning 500 (issue #327 follow-up).
+
 ## [0.0.11] - 2026-10-24
 
 ### Added
