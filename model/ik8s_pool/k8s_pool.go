@@ -14,10 +14,12 @@
 
 // Package ik8s_pool implements the K8s instance pool domain (k8s-pools.md):
 // the pool is a control-plane resource whose member list is written only by
-// the K8s discovery component through the /k8s_pools InnerAPI. Providers
-// referencing the pool (instance_source=k8s_pool, k8s_pool_name=name) hold a
-// read-only mirror in k8s_instance_pool that this manager refreshes
-// transactionally together with the derived pools of referencing clusters.
+// the K8s discovery component through the /k8s_pools InnerAPI. k8s_pools is
+// the single source of truth for k8s-sourced instances: providers referencing
+// the pool (instance_source=k8s_pool, k8s_pool_name=name) keep only the name
+// reference, and every consumer (cluster_table export, batch egress) resolves
+// instances at read time through iprovider.InstancePoolResolver. PUT/DELETE
+// therefore write only the k8s_pools table — no provider mirror, no fan-out.
 package ik8s_pool
 
 import (
@@ -26,7 +28,6 @@ import (
 	"strings"
 
 	"github.com/rainway-ai-gateway/ai-gateway-api/lib/xerror"
-	"github.com/rainway-ai-gateway/ai-gateway-api/model/icluster_conf"
 	"github.com/rainway-ai-gateway/ai-gateway-api/model/iprovider"
 	"github.com/rainway-ai-gateway/ai-gateway-api/model/itxn"
 )
@@ -85,8 +86,11 @@ func ValidateInstances(params []InstanceParam) ([]iprovider.ProviderInstance, er
 	return rst, nil
 }
 
-// K8sPoolStorager defines persistence operations for k8s_pools.
+// K8sPoolStorager defines persistence operations for k8s_pools. It embeds
+// iprovider.K8sPoolInstanceReader so the same storager backs the realtime
+// resolution path (InstancePoolResolver) without a second read implementation.
 type K8sPoolStorager interface {
+	iprovider.K8sPoolInstanceReader
 	// UpsertPool creates or replaces the instance list of the named pool.
 	UpsertPool(ctx context.Context, name string, instances []iprovider.ProviderInstance) error
 	// FetchPool returns the named pool, or (nil, nil) when it does not exist.
@@ -102,36 +106,31 @@ type K8sPoolManager struct {
 	txn              itxn.TxnStorager
 	storager         K8sPoolStorager
 	providerStorager iprovider.ProviderStorager
-	clusterManager   *icluster_conf.ClusterManager
 }
 
 // NewK8sPoolManager creates a K8sPoolManager. Dependencies are injected (no
-// stateful.Default* access) so tests can mock them; icluster_conf does not
-// depend on this package, so the import graph stays acyclic.
+// stateful.Default* access) so tests can mock them. The provider storager is
+// only read (reference checks); the manager never writes providers, clusters
+// or derived pools — k8s_pools is the only table it mutates.
 func NewK8sPoolManager(txn itxn.TxnStorager, storager K8sPoolStorager,
-	providerStorager iprovider.ProviderStorager, clusterManager *icluster_conf.ClusterManager) *K8sPoolManager {
+	providerStorager iprovider.ProviderStorager) *K8sPoolManager {
 
 	return &K8sPoolManager{
 		txn:              txn,
 		storager:         storager,
 		providerStorager: providerStorager,
-		clusterManager:   clusterManager,
 	}
 }
 
 // ReplaceInstances replaces the pool's instance list (idempotent upsert; an
-// empty list means "zero instances") and fans the new list out, within a
-// single transaction, to every provider referencing the pool and to the
-// derived pools of clusters referencing those providers. Any failure rolls
-// the whole fan-out back.
+// empty list means "zero instances"). Only the k8s_pools table is written;
+// consumers pick the new list up at their next read (cluster_table export
+// version bumps automatically via the export signature).
 func (m *K8sPoolManager) ReplaceInstances(ctx context.Context, name string,
 	instances []iprovider.ProviderInstance) (*K8sPool, error) {
 
 	if err := m.txn.AtomExecute(ctx, func(ctx context.Context) error {
-		if err := m.storager.UpsertPool(ctx, name, instances); err != nil {
-			return err
-		}
-		return m.syncProviderMirrors(ctx, name, instances)
+		return m.storager.UpsertPool(ctx, name, instances)
 	}); err != nil {
 		return nil, err
 	}
@@ -139,10 +138,13 @@ func (m *K8sPoolManager) ReplaceInstances(ctx context.Context, name string,
 	return m.storager.FetchPool(ctx, name)
 }
 
-// DeletePool deletes the named pool without reference protection: providers
-// referencing it get an empty k8s_instance_pool mirror and their referencing
-// clusters' derived pools are cleared, all within a single transaction.
-// "Pool does not exist" is equivalent to "zero instances" for consumers.
+// DeletePool deletes the named pool with reference awareness: when no
+// provider references it the row is removed (404 afterwards); when providers
+// still reference it the row is kept with its instances cleared (so GET
+// returns 200 + instance_count=0 and last_sync_time stays inspectable). Both
+// paths write only the k8s_pools table within a single transaction; the
+// provider table is only read. "Pool does not exist" is equivalent to "zero
+// instances" for consumers either way.
 func (m *K8sPoolManager) DeletePool(ctx context.Context, name string) error {
 	existing, err := m.storager.FetchPool(ctx, name)
 	if err != nil {
@@ -152,11 +154,16 @@ func (m *K8sPoolManager) DeletePool(ctx context.Context, name string) error {
 		return xerror.WrapRecordNotExist("k8s pool")
 	}
 
+	referenced, err := m.hasReferencingProviders(ctx, name)
+	if err != nil {
+		return err
+	}
+
 	return m.txn.AtomExecute(ctx, func(ctx context.Context) error {
-		if err := m.storager.DeletePool(ctx, name); err != nil {
-			return err
+		if referenced {
+			return m.storager.UpsertPool(ctx, name, []iprovider.ProviderInstance{})
 		}
-		return m.syncProviderMirrors(ctx, name, []iprovider.ProviderInstance{})
+		return m.storager.DeletePool(ctx, name)
 	})
 }
 
@@ -170,36 +177,16 @@ func (m *K8sPoolManager) FetchPoolList(ctx context.Context) ([]*K8sPool, error) 
 	return m.storager.FetchPoolList(ctx)
 }
 
-// syncProviderMirrors refreshes the k8s_instance_pool mirror of every
-// provider referencing the named pool and propagates the effective pool to
-// the derived pools of clusters referencing those providers (N:1 references
-// share the same instance list). Provider mirrors are written through the
-// storager directly, bypassing ValidateProviderParam's read-only check on
-// k8s_instance_pool.
-func (m *K8sPoolManager) syncProviderMirrors(ctx context.Context, name string,
-	instances []iprovider.ProviderInstance) error {
-
+// hasReferencingProviders reports whether any provider references the named
+// pool (instance_source=k8s_pool && k8s_pool_name==name). Read-only.
+func (m *K8sPoolManager) hasReferencingProviders(ctx context.Context, name string) (bool, error) {
 	k8sSource := iprovider.InstanceSourceK8sPool
 	providers, _, err := m.providerStorager.FetchProviderList(ctx, &iprovider.ProviderFilter{
 		InstanceSource: &k8sSource,
 		K8sPoolName:    &name,
 	})
 	if err != nil {
-		return err
+		return false, err
 	}
-
-	for _, p := range providers {
-		if err := m.providerStorager.UpdateProvider(ctx, p.Name, &iprovider.ProviderParam{
-			K8sInstancePool: &instances,
-		}); err != nil {
-			return err
-		}
-
-		updated := *p
-		updated.K8sInstancePool = instances
-		if err := m.clusterManager.SyncProviderEffectivePool(ctx, &updated); err != nil {
-			return err
-		}
-	}
-	return nil
+	return len(providers) > 0, nil
 }

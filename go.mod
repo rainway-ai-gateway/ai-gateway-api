@@ -5,7 +5,7 @@ go 1.24.0
 require (
 	github.com/BurntSushi/toml v0.3.1
 	github.com/DATA-DOG/go-sqlmock v1.4.0
-	github.com/bfenetworks/bfe v1.8.9
+	github.com/bfenetworks/bfe v1.9.0
 	github.com/bfenetworks/go-lib v0.0.4
 	github.com/codegangsta/negroni v1.0.0
 	github.com/didi/gendry v1.7.0
@@ -31,6 +31,7 @@ require (
 	filippo.io/edwards25519 v1.1.0 // indirect
 	github.com/ClickHouse/ch-go v0.67.0 // indirect
 	github.com/andybalholm/brotli v1.2.0 // indirect
+	github.com/expr-lang/expr v1.17.8 // indirect
 	github.com/go-faster/city v1.0.1 // indirect
 	github.com/go-faster/errors v0.7.1 // indirect
 	github.com/klauspost/compress v1.18.0 // indirect
@@ -67,7 +68,6 @@ require (
 	github.com/tidwall/match v1.1.1 // indirect
 	github.com/tidwall/pretty v1.2.0 // indirect
 	github.com/tidwall/sjson v1.2.5 // indirect
-	github.com/tjfoc/gmsm v1.3.2 // indirect
 	github.com/zmap/go-iptree v0.0.0-20170831022036-1948b1097e25 // indirect
 	golang.org/x/crypto v0.45.0
 	golang.org/x/sys v0.38.0 // indirect
@@ -79,5 +79,3 @@ require (
 	modernc.org/memory v1.5.0 // indirect
 	modernc.org/sqlite v1.23.1 // indirect
 )
-
-// 本地联调时可临时切换：replace github.com/bfenetworks/bfe => ../bfe

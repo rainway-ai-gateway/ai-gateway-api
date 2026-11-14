@@ -59,11 +59,11 @@ var BasicTimeoutsSchema = &testutil.ObjectSchema{
 		"timeout_readbody_client", "timeout_read_client_again", "timeout_write_client",
 	},
 	Fields: map[string]testutil.FieldSpec{
-		"timeout_conn_serv":       {Type: testutil.TypeInt},
-		"timeout_response_header": {Type: testutil.TypeInt},
-		"timeout_readbody_client": {Type: testutil.TypeInt},
+		"timeout_conn_serv":         {Type: testutil.TypeInt},
+		"timeout_response_header":   {Type: testutil.TypeInt},
+		"timeout_readbody_client":   {Type: testutil.TypeInt},
 		"timeout_read_client_again": {Type: testutil.TypeInt},
-		"timeout_write_client":    {Type: testutil.TypeInt},
+		"timeout_write_client":      {Type: testutil.TypeInt},
 	},
 }
 
@@ -132,12 +132,14 @@ var KeyPolicySchema = &testutil.ObjectSchema{
 
 // KeyAffinitySchema llm_config.key_affinity schema
 var KeyAffinitySchema = &testutil.ObjectSchema{
-	Required: []string{"enabled", "ttl", "redis_prefix", "penalty_enable"},
+	Required: []string{"enabled", "ttl", "redis_prefix", "penalty_enable", "penalty_ttl_429", "penalty_ttl_auth"},
 	Fields: map[string]testutil.FieldSpec{
-		"enabled":        {Type: testutil.TypeBool},
-		"ttl":            {Type: testutil.TypeInt},
-		"redis_prefix":   {Type: testutil.TypeString},
-		"penalty_enable": {Type: testutil.TypeBool},
+		"enabled":          {Type: testutil.TypeBool},
+		"ttl":              {Type: testutil.TypeInt},
+		"redis_prefix":     {Type: testutil.TypeString},
+		"penalty_enable":   {Type: testutil.TypeBool},
+		"penalty_ttl_429":  {Type: testutil.TypeInt},
+		"penalty_ttl_auth": {Type: testutil.TypeInt},
 	},
 }
 
@@ -145,11 +147,11 @@ var KeyAffinitySchema = &testutil.ObjectSchema{
 var NormalizeUpstreamErrorSchema = &testutil.ObjectSchema{
 	Optional: []string{"enabled", "stream_enabled", "unrecognized_action", "max_body_bytes", "redact_secrets"},
 	Fields: map[string]testutil.FieldSpec{
-		"enabled":              {Type: testutil.TypeBool},
-		"stream_enabled":       {Type: testutil.TypeBool},
-		"unrecognized_action":  {Type: testutil.TypeString},
-		"max_body_bytes":       {Type: testutil.TypeInt},
-		"redact_secrets":       {Type: testutil.TypeBool},
+		"enabled":             {Type: testutil.TypeBool},
+		"stream_enabled":      {Type: testutil.TypeBool},
+		"unrecognized_action": {Type: testutil.TypeString},
+		"max_body_bytes":      {Type: testutil.TypeInt},
+		"redact_secrets":      {Type: testutil.TypeBool},
 	},
 }
 
@@ -160,18 +162,21 @@ var LLMConfigSchema = &testutil.ObjectSchema{
 	Required: []string{"models", "provider"},
 	Optional: []string{
 		"model_mappings", "keys",
-		"key_policy", "key_affinity", "normalize_upstream_error", "match_prefix", "strip_prefix",
+		"key_policy", "key_affinity", "normalize_upstream_error", "ensure_reasoning_content",
+		"price_miss_action", "match_prefix", "strip_prefix",
 	},
 	Fields: map[string]testutil.FieldSpec{
-		"models":         {Type: testutil.TypeArray, Item: &testutil.FieldSpec{Type: testutil.TypeString}},
-		"model_mappings": {Type: testutil.TypeArray, Elem: ModelMappingSchema},
-		"keys":           {Type: testutil.TypeArray, Elem: ClusterKeySchema},
-		"key_policy":     {Type: testutil.TypeObject, Nested: KeyPolicySchema},
-		"key_affinity":   {Type: testutil.TypeObject, Nested: KeyAffinitySchema},
+		"models":                   {Type: testutil.TypeArray, Item: &testutil.FieldSpec{Type: testutil.TypeString}},
+		"model_mappings":           {Type: testutil.TypeArray, Elem: ModelMappingSchema},
+		"keys":                     {Type: testutil.TypeArray, Elem: ClusterKeySchema},
+		"key_policy":               {Type: testutil.TypeObject, Nested: KeyPolicySchema},
+		"key_affinity":             {Type: testutil.TypeObject, Nested: KeyAffinitySchema},
 		"normalize_upstream_error": {Type: testutil.TypeObject, Nested: NormalizeUpstreamErrorSchema},
-		"provider":       {Type: testutil.TypeString},
-		"match_prefix":   {Type: testutil.TypeString},
-		"strip_prefix":   {Type: testutil.TypeBool},
+		"ensure_reasoning_content": {Type: testutil.TypeArray, Item: &testutil.FieldSpec{Type: testutil.TypeString}},
+		"price_miss_action":        {Type: testutil.TypeString},
+		"provider":                 {Type: testutil.TypeString},
+		"match_prefix":             {Type: testutil.TypeString},
+		"strip_prefix":             {Type: testutil.TypeBool},
 	},
 }
 

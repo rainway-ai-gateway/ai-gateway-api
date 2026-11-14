@@ -206,6 +206,17 @@ func (f *fakeAPIKeyQuerier) FetchAPIKeyList(ctx context.Context, filter *api_key
 	return nil, nil
 }
 
+// fakeK8sInstanceReader implements iprovider.K8sPoolInstanceReader for the
+// realtime-resolution egress path.
+type fakeK8sInstanceReader struct {
+	instances []iprovider.ProviderInstance
+	err       error
+}
+
+func (f *fakeK8sInstanceReader) FetchK8sPoolInstances(ctx context.Context, poolName string) ([]iprovider.ProviderInstance, error) {
+	return f.instances, f.err
+}
+
 type fakeProviderQuerier struct {
 	fetchFn func(ctx context.Context, filter *iprovider.ProviderFilter) (*iprovider.Provider, error)
 }

@@ -24,6 +24,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/rainway-ai-gateway/ai-gateway-api/lib/xerror"
 	"github.com/rainway-ai-gateway/ai-gateway-api/model/iprovider"
 	"github.com/rainway-ai-gateway/ai-gateway-api/stateful"
 )
@@ -118,7 +119,7 @@ func (m *Manager) Cancel(ctx context.Context, batchID, productName string) (*Bat
 
 // cancelReplay 已 cancelling 任务的幂等重放（issue #274）：重发 provider
 // cancel 保证取消意图落地（provider cancel 幂等）；预留释放为幂等 no-op
-//（簿记已删），不新增 release/charge/settlement transition；出网失败按原错误
+// （簿记已删），不新增 release/charge/settlement transition；出网失败按原错误
 // 映射返回（502/超时），状态保持 cancelling，由下轮重放或对账补发恢复。
 func (m *Manager) cancelReplay(ctx context.Context, task *BatchTask) (*BatchTask, error) {
 	access, err := m.resolveProviderAccess(ctx, task.Provider, task.KeyName)
@@ -202,7 +203,10 @@ func (m *Manager) resolveProviderAccess(ctx context.Context, providerName, keyNa
 		return nil, errProviderUnavailable(providerName)
 	}
 
-	inst := pickProviderInstance(provider)
+	inst, err := m.pickProviderInstance(ctx, provider)
+	if err != nil {
+		return nil, err
+	}
 	if inst == nil {
 		return nil, errProviderUnavailable(providerName)
 	}
@@ -253,19 +257,29 @@ func (m *Manager) releaseReserve(ctx context.Context, batchID string) error {
 	return m.redis.Delete(ctx, bookKey)
 }
 
-// pickProviderInstance 选取第一个未禁用的有效实例（EffectiveInstancePool
-// 已按 instance_source 归并 instance_pool / k8s_instance_pool）。
-func pickProviderInstance(provider *iprovider.Provider) *iprovider.ProviderInstance {
-	for _, inst := range iprovider.EffectiveInstancePool(provider) {
+// pickProviderInstance 选取第一个未禁用的有效实例。有效实例经
+// InstancePoolResolver 实时解析：手工来源读 instance_pool，k8s 来源按
+// k8s_pool_name 实时查 k8s_pools（单一事实源，无镜像）。
+func (m *Manager) pickProviderInstance(ctx context.Context,
+	provider *iprovider.Provider) (*iprovider.ProviderInstance, error) {
+
+	if provider == nil {
+		return nil, nil
+	}
+	instances, err := m.instancePoolResolver.Effective(ctx, provider)
+	if err != nil {
+		return nil, xerror.WrapModelError(err)
+	}
+	for _, inst := range instances {
 		if inst.Disable {
 			continue
 		}
 		if inst.Addr == "" || inst.Port <= 0 {
 			continue
 		}
-		return &inst
+		return &inst, nil
 	}
-	return nil
+	return nil, nil
 }
 
 // pickProviderKey 按 key_name 选取 provider key；key_name 为空或匹配

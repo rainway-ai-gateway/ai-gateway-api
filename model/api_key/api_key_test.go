@@ -99,6 +99,35 @@ func TestFillUnlimitedQuotaBalance(t *testing.T) {
 	assert.Equal(t, float64(100000000), *quotaPlan.Balance.Remaining)
 }
 
+func TestFillQuotaBalance(t *testing.T) {
+	t.Run("normal remaining", func(t *testing.T) {
+		quotaPlan := &shared.QuotaPlanParam{Quota: ptrFloat64(100)}
+		fillQuotaBalance(quotaPlan, 40)
+		require.NotNil(t, quotaPlan.Balance)
+		assert.Equal(t, float64(60), *quotaPlan.Balance.Used)
+		assert.Equal(t, float64(40), *quotaPlan.Balance.Remaining)
+	})
+
+	t.Run("negative remaining records overage", func(t *testing.T) {
+		// issue #1476: BFE 全额扣减后余额可为负，used 如实反映实际消耗、
+		// 允许大于 quota；对外展示的 Remaining 钳 0。
+		quotaPlan := &shared.QuotaPlanParam{Quota: ptrFloat64(100)}
+		fillQuotaBalance(quotaPlan, -25)
+		require.NotNil(t, quotaPlan.Balance)
+		assert.Equal(t, float64(125), *quotaPlan.Balance.Used)
+		assert.Equal(t, float64(0), *quotaPlan.Balance.Remaining)
+	})
+
+	t.Run("remaining above quota guards used", func(t *testing.T) {
+		// 防御：数据异常（remaining > quota）时 used 兜底为 0。
+		quotaPlan := &shared.QuotaPlanParam{Quota: ptrFloat64(100)}
+		fillQuotaBalance(quotaPlan, 120)
+		require.NotNil(t, quotaPlan.Balance)
+		assert.Equal(t, float64(0), *quotaPlan.Balance.Used)
+		assert.Equal(t, float64(120), *quotaPlan.Balance.Remaining)
+	})
+}
+
 func newAPIKeyManager(storager *fakeAPIKeyStorager) *APIKeyManager {
 	return NewAPIKeyManager(&fakeTxn{}, storager, &fakeQuotaPlanStorager{}, &fakeRateLimitPolicyStorager{}, &fakeRouteRulesStorager{}, &fakeEntityStorager{}, nil)
 }

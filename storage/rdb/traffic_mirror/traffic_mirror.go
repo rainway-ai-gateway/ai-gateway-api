@@ -18,11 +18,20 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/rainway-ai-gateway/ai-gateway-api/lib"
+	"github.com/rainway-ai-gateway/ai-gateway-api/lib/xlock"
 	"github.com/rainway-ai-gateway/ai-gateway-api/model/traffic_mirror"
 	"github.com/rainway-ai-gateway/ai-gateway-api/storage/rdb/internal/dao"
 )
+
+// replaceLockName guards the whole-collection replacement of this resource.
+const replaceLockName = "ai_gateway:replace:traffic_mirror_rules"
+
+// replaceLockTimeout bounds how long a concurrent replacement waits for the
+// current one before the request is told to retry (409).
+const replaceLockTimeout = 10 * time.Second
 
 type TrafficMirrorStorager struct {
 	dbCtxFactory lib.DBContextFactory
@@ -70,6 +79,15 @@ func (s *TrafficMirrorStorager) ReplaceAll(ctx context.Context, rules []*traffic
 	if err != nil {
 		return err
 	}
+
+	// delete-all + insert-all takes next-key locks on the whole table; concurrent
+	// replacements deadlock under InnoDB REPEATABLE READ (issue #295). Serialize
+	// per collection across api replicas; SQLite is a no-op.
+	release, err := xlock.Acquire(ctx, dbCtx.Conn(), replaceLockName, replaceLockTimeout)
+	if err != nil {
+		return err
+	}
+	defer release()
 
 	data := make([]*dao.TTrafficMirrorRuleParam, 0, len(rules))
 	for _, rule := range rules {

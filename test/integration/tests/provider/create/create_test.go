@@ -17,6 +17,7 @@ package provider_test
 import (
 	"encoding/json"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/rainway-ai-gateway/ai-gateway-api/integration/testutil"
@@ -517,6 +518,72 @@ func TestProvider_Create(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("PV-1-020 description 256 字节多字节边界（合法）", func(t *testing.T) {
+		// issue #310：providers.md 统一为 UTF-8 字节口径后，85 个汉字（255
+		// 字节）+ "a" = 256 字节，合法；修复前按字节误拒的边界必须放通。
+		name := testutil.UniqueProviderName()
+		defer testutil.DeleteProvider(name)
+		desc := strings.Repeat("汉", 85) + "a"
+		body := minProviderBody(name)
+		body["description"] = desc
+		resp, err := testutil.GetClient().Post("/open-api/v1/providers", body)
+		if err != nil {
+			t.Fatalf("request failed: %v", err)
+		}
+		testutil.AssertSuccess(t, resp)
+		testutil.AssertDataFieldEquals(t, resp, "description", desc)
+	})
+
+	t.Run("PV-1-021 description 600 字节被拒绝", func(t *testing.T) {
+		// 200 个汉字 = 600 字节 > 256 上限，按统一后的字节口径必须 422。
+		name := testutil.UniqueProviderName()
+		body := minProviderBody(name)
+		body["description"] = strings.Repeat("汉", 200)
+		resp, err := testutil.GetClient().Post("/open-api/v1/providers", body)
+		if err != nil {
+			t.Fatalf("request failed: %v", err)
+		}
+		testutil.AssertErrCode(t, resp, 422)
+	})
+
+	t.Run("PV-1-022 instance addr 为非法 hostname（连字符开头）", func(t *testing.T) {
+		// issue #321：E2E 复现形态，双实例 weight 0/100
+		name := testutil.UniqueProviderName()
+		body := map[string]interface{}{
+			"name": name,
+			"instance_pool": []interface{}{
+				map[string]interface{}{"addr": "-bad", "weight": 0, "port": 8080},
+				map[string]interface{}{"addr": "10.0.0.2", "weight": 100, "port": 8080},
+			},
+			"model_protocols": []string{"openai"},
+			"models":          []string{"deepseek-chat"},
+		}
+		resp, err := testutil.GetClient().Post("/open-api/v1/providers", body)
+		if err != nil {
+			t.Fatalf("request failed: %v", err)
+		}
+		testutil.AssertErrCode(t, resp, 422)
+
+		// 非持久化守护：非法 Provider 不得落库
+		resp, err = testutil.GetClient().Get("/open-api/v1/providers/" + name)
+		if err != nil {
+			t.Fatalf("readback failed: %v", err)
+		}
+		testutil.AssertErrCode(t, resp, 404)
+	})
+
+	t.Run("PV-1-023 instance addr 尾随连字符", func(t *testing.T) {
+		body := minProviderBody(testutil.UniqueProviderName())
+		body["instance_pool"] = []interface{}{
+			map[string]interface{}{"addr": "bad-", "weight": 100, "port": 8080},
+		}
+		resp, err := testutil.GetClient().Post("/open-api/v1/providers", body)
+		if err != nil {
+			t.Fatalf("request failed: %v", err)
+		}
+		testutil.AssertErrCode(t, resp, 422)
+	})
 
 	t.Cleanup(func() {
 		testutil.DeleteProvider(providerMin)

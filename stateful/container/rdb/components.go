@@ -227,15 +227,20 @@ func Init() error {
 		})
 	container.ClusterManager.SetOperationLogManager(container.OperationLogManager)
 
-	// K8s pool manager: maintains the k8s_pools table and the
-	// k8s_instance_pool mirrors of referencing providers, propagating the
-	// effective pool to derived cluster pools transactionally (k8s-pools.md).
+	// K8s pool manager: maintains the k8s_pools table. k8s_pools is the
+	// single source of truth for k8s-sourced instances; the storager also
+	// backs the realtime resolution used by the cluster_table exporter and
+	// the batch egress (k8s-pools.md).
 	container.K8sPoolStorager = k8sPoolStorage.NewRDBK8sPoolStorager(stateful.NewBFEDBContext)
+	container.InstancePoolResolver = iprovider.NewInstancePoolResolver(container.K8sPoolStorager)
+	// The cluster manager resolves k8s_pool-mode provider instances at export
+	// time; the provider manager needs no resolver (its sync hook only
+	// compares instance_source / instance_pool).
+	container.ClusterManager.SetInstancePoolResolver(container.InstancePoolResolver)
 	container.K8sPoolManager = ik8s_pool.NewK8sPoolManager(
 		container.TxnStoragerSingleton,
 		container.K8sPoolStorager,
-		container.ProviderStoragerSingleton,
-		container.ClusterManager)
+		container.ProviderStoragerSingleton)
 
 	// EPP pool manager: the cluster manager provides the EPPClusterSource
 	// (balance_mode=EPP clusters and their raw epp_config); ManagerOptions are
@@ -297,7 +302,8 @@ func Init() error {
 
 	container.EntityTypeManager = entity.NewEntityTypeManager(
 		container.TxnStoragerSingleton,
-		container.EntityTypeStorager)
+		container.EntityTypeStorager,
+		container.EntityStorager)
 	container.EntityTypeManager.SetOperationLogManager(container.OperationLogManager)
 
 	container.EntityManager = entity.NewEntityManager(
@@ -453,6 +459,7 @@ func initBatch() error {
 		nil, // clock：系统时钟
 	)
 	manager.SetOperationLogManager(container.OperationLogManager)
+	manager.SetInstancePoolResolver(container.InstancePoolResolver)
 	container.BatchManager = manager
 
 	if !stateful.DefaultConfig.BatchJob.Enable {

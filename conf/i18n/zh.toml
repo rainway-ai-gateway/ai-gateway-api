@@ -14,6 +14,11 @@ Lang          = "zh"
 "^Feature Access Deny$" = "无功能访问权限"
 "^Product Access Deny$" = "无产品线访问权限"
 "Unknown Exception"     = "未知异常"
+"Conflict"              = "冲突"
+
+"^collection is being replaced by another request, retry later$" = "规则集合正在被其他请求整体替换，请稍后重试"
+"^collection is being replaced concurrently, retry later$"       = "规则集合并发更新冲突，请稍后重试"
+"^database operation failed$"                                    = "数据库操作失败"
 
 "^Product Not Exist$"     = "产品线不存在"
 "^Not Cluste Existed$"    = "暂无集群"

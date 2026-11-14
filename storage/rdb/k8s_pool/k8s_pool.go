@@ -96,6 +96,23 @@ func (s *RDBK8sPoolStorager) FetchPool(ctx context.Context, name string) (*ik8s_
 	return fromDAO(one), nil
 }
 
+// FetchK8sPoolInstances implements iprovider.K8sPoolInstanceReader: it
+// returns the current instance list of the named pool for realtime
+// resolution. A missing pool yields a non-nil empty list (zero instances),
+// keeping "pool does not exist" equivalent to "zero instances" (I4).
+func (s *RDBK8sPoolStorager) FetchK8sPoolInstances(ctx context.Context,
+	name string) ([]iprovider.ProviderInstance, error) {
+
+	pool, err := s.FetchPool(ctx, name)
+	if err != nil {
+		return nil, err
+	}
+	if pool == nil {
+		return []iprovider.ProviderInstance{}, nil
+	}
+	return pool.Instances, nil
+}
+
 func (s *RDBK8sPoolStorager) FetchPoolList(ctx context.Context) ([]*ik8s_pool.K8sPool, error) {
 	dbCtx, err := s.dbCtxFactory(ctx)
 	if err != nil {

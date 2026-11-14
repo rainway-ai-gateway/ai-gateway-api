@@ -528,3 +528,17 @@ func TestJobTablePrefix(t *testing.T) {
 	j = NewJob(nil, "", time.Minute, 7)
 	assert.Equal(t, "bfe_ai_request_log", j.table(tableDetail))
 }
+
+// TestBuildAggregateInsertSQL_TTFTStreamCaliber pins the stream-only caliber
+// of ttft_us_sum/tpot_us_sum at aggregation time: BFE records first-byte time
+// for non-stream responses as well (mod_body_process), so non-stream rows must
+// not enter these sums (ai-gateway-api#315).
+func TestBuildAggregateInsertSQL_TTFTStreamCaliber(t *testing.T) {
+	query := buildAggregateInsertSQL("bfe_ai_request_log", "bfe_ai_metrics_1m")
+	assert.Contains(t, query,
+		"SUM(CASE WHEN ai_stream=1 THEN IFNULL(ai_ttft_us,0) ELSE 0 END) AS ttft_us_sum")
+	assert.Contains(t, query,
+		"SUM(CASE WHEN ai_stream=1 THEN IFNULL(ai_tpot_us,0) ELSE 0 END) AS tpot_us_sum")
+	assert.NotContains(t, query, "SUM(IFNULL(ai_ttft_us,0))")
+	assert.NotContains(t, query, "SUM(IFNULL(ai_tpot_us,0))")
+}

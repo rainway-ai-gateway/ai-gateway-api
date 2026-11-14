@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"math"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/bfenetworks/go-lib/quota"
 
@@ -137,6 +138,14 @@ var ValidPriceKeys = map[string]bool{
 // up to 2^53.
 const maxPriceFixedPoint = 1 << 53
 
+// MaxModelPriceFieldLength bounds provider / model / base_model to the
+// 1-255 character limit required by model-prices.md §1 and mirrored by the
+// VARCHAR(255) columns of model_prices. The API layer must reject longer
+// values with 422 instead of relying on the DB to error or truncate
+// (issue #309). Length is counted in characters (runes), matching both the
+// contract wording ("长度 1-255 字符") and MySQL VARCHAR(255) semantics.
+const MaxModelPriceFieldLength = 255
+
 // checkPricePrecision rejects prices whose scaled value reaches 2^53, where
 // float64 can no longer represent the downstream cost computation exactly.
 func checkPricePrecision(key string, v float64) error {
@@ -191,6 +200,16 @@ func validateLimitValue(key string, v interface{}) error {
 	return nil
 }
 
+// validatePriceField checks one of provider / model / base_model against the
+// length limit. The non-empty check stays at the call site (TrimSpace-based,
+// so a whitespace-only value is rejected before this runs).
+func validatePriceField(name, s string) error {
+	if utf8.RuneCountInString(s) > MaxModelPriceFieldLength {
+		return xerror.WrapParamErrorWithMsg("%s length must be between 1 and %d characters", name, MaxModelPriceFieldLength)
+	}
+	return nil
+}
+
 // ValidateModelPrice validates a model price record.
 func ValidateModelPrice(m *ModelPrice) error {
 	if m == nil {
@@ -199,11 +218,20 @@ func ValidateModelPrice(m *ModelPrice) error {
 	if strings.TrimSpace(m.Provider) == "" {
 		return xerror.WrapParamErrorWithMsg("provider is required")
 	}
+	if err := validatePriceField("provider", m.Provider); err != nil {
+		return err
+	}
 	if strings.TrimSpace(m.Model) == "" {
 		return xerror.WrapParamErrorWithMsg("model is required")
 	}
+	if err := validatePriceField("model", m.Model); err != nil {
+		return err
+	}
 	if strings.TrimSpace(m.BaseModel) == "" {
 		return xerror.WrapParamErrorWithMsg("base_model is required")
+	}
+	if err := validatePriceField("base_model", m.BaseModel); err != nil {
+		return err
 	}
 	if strings.TrimSpace(m.Mode) == "" {
 		return xerror.WrapParamErrorWithMsg("mode is required")

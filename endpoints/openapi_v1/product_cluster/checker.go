@@ -19,7 +19,6 @@ import (
 	"net"
 	"regexp"
 
-	"github.com/rainway-ai-gateway/ai-gateway-api/lib/validate"
 	"github.com/rainway-ai-gateway/ai-gateway-api/model/icluster_conf"
 )
 
@@ -34,7 +33,7 @@ func (e *ValidationError) Error() string {
 }
 
 func checkLLMConfig(llmConfig *icluster_conf.LLMConfig) error {
-	return validate.LLMConfig(llmConfig)
+	return icluster_conf.ValidateLLMConfig(llmConfig)
 }
 
 // CheckEPPServer validates EPP server configuration.

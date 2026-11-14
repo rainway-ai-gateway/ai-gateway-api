@@ -376,6 +376,32 @@ models:
 			return
 		}
 		assert.Equal(t, []interface{}{"anthropic"}, protocols)
+
+		// 变更传播：ModelProtocols 来自 provider 记录的实时读取，不是创建时的快照。
+		// 放宽 provider 协议后，下一次导出必须收敛为新值（本用例补齐 PATCH 传播断言，
+		// 原 design.md 的 IN-1-004 与本用例重复，已合并至此）。
+		patch, err := testutil.GetClient().Patch("/open-api/v1/providers/"+providerName, map[string]interface{}{
+			"instance_pool":   []interface{}{map[string]interface{}{"addr": "10.0.0.1", "weight": 100, "port": 8080}},
+			"models":          []string{"claude-3-opus-20240229"},
+			"model_protocols": []string{"openai", "anthropic"},
+		})
+		if err != nil {
+			t.Fatalf("patch provider failed: %v", err)
+		}
+		testutil.AssertSuccess(t, patch)
+
+		resp2, err := testutil.GetClient().Get("/inner-api/v1/configs/tls_conf/server_data_conf")
+		if err != nil {
+			t.Fatalf("second export failed: %v", err)
+		}
+		testutil.AssertSuccess(t, resp2)
+		aiconf2 := extractAIConf(t, resp2, clusterName)
+		protocols2, ok := aiconf2["ModelProtocols"].([]interface{})
+		if !assert.True(t, ok, "AIConf.ModelProtocols should be an array after provider update") {
+			return
+		}
+		assert.Equal(t, []interface{}{"openai", "anthropic"}, protocols2,
+			"export must reflect the updated provider protocols (read-time resolution)")
 	})
 
 	t.Run("IN-TLS-1-008 AIConf.KeyPolicy 包含 SessionAffinity*", func(t *testing.T) {
@@ -593,5 +619,117 @@ func TestInnerAPI_ExportNormalizeUpstreamError(t *testing.T) {
 		nue, exists := aiconf["NormalizeUpstreamError"]
 		assert.True(t, exists, "field key should be present (no omitempty)")
 		assert.Nil(t, nue, "unset config must export as null (BFE disabled)")
+	})
+}
+
+// TestInnerAPI_ExportEnsureReasoningContent locks the InnerAPI export of
+// AIConf.EnsureReasoningContent (2026-11-03 reasoning content normalization):
+// the snake_case OpenAPI field maps to the PascalCase export key with the same
+// value, a cluster without the config exports null, and the snake_case key
+// never leaks into the export.
+// Design: tests/integration/tests/innerapi/design.md §20.
+func TestInnerAPI_ExportEnsureReasoningContent(t *testing.T) {
+	providerName := testutil.UniqueProviderName()
+	if _, err := testutil.CreateProvider(providerName, map[string]interface{}{
+		"models":          []string{"deepseek-chat"},
+		"model_protocols": []string{"openai", "anthropic"},
+	}); err != nil {
+		t.Fatalf("setup provider failed: %v", err)
+	}
+	defer testutil.DeleteProvider(providerName)
+
+	exportAIConf := func(t *testing.T, clusterName string) map[string]interface{} {
+		t.Helper()
+		resp, err := testutil.GetClient().Get("/inner-api/v1/configs/tls_conf/server_data_conf")
+		if err != nil {
+			t.Fatalf("export request failed: %v", err)
+		}
+		testutil.AssertSuccess(t, resp)
+		var data map[string]interface{}
+		if err := json.Unmarshal(resp.Data, &data); err != nil {
+			t.Fatalf("unmarshal failed: %v", err)
+		}
+		clusterConf, _ := data["ClusterConf"].(map[string]interface{})
+		config, _ := clusterConf["Config"].(map[string]interface{})
+		cluster, ok := config[clusterName].(map[string]interface{})
+		if !assert.True(t, ok, "cluster %s should exist in export", clusterName) {
+			return nil
+		}
+		aiconf, ok := cluster["AIConf"].(map[string]interface{})
+		if !assert.True(t, ok, "AIConf should be an object") {
+			return nil
+		}
+		return aiconf
+	}
+	createCluster := func(t *testing.T, ensure interface{}) string {
+		t.Helper()
+		name := testutil.UniqueClusterName()
+		llm := map[string]interface{}{
+			"models":   []string{"deepseek-chat"},
+			"provider": providerName,
+		}
+		if ensure != nil {
+			llm["ensure_reasoning_content"] = ensure
+		}
+		resp, err := testutil.GetClient().Post("/open-api/v1/clusters", map[string]interface{}{
+			"name":       name,
+			"llm_config": llm,
+		})
+		if err != nil {
+			t.Fatalf("setup create cluster failed: %v", err)
+		}
+		if resp.ErrNum != 200 {
+			t.Fatalf("setup create cluster: expected 200, got %d, ErrMsg=%s", resp.ErrNum, resp.ErrMsg)
+		}
+		return name
+	}
+
+	t.Run("IN-ERC-1-001 导出键名与取值一致（snake→Pascal）", func(t *testing.T) {
+		name := createCluster(t, []string{"openai", "anthropic"})
+		defer testutil.DeleteCluster(name)
+
+		aiconf := exportAIConf(t, name)
+		if !assert.NotNil(t, aiconf) {
+			return
+		}
+		v, ok := aiconf["EnsureReasoningContent"].([]interface{})
+		if !assert.True(t, ok, "AIConf.EnsureReasoningContent should be an array (PascalCase key)") {
+			return
+		}
+		assert.Equal(t, []interface{}{"openai", "anthropic"}, v)
+
+		// 映射写错（例如漏掉 json tag 或写错键名）时这条会失败
+		_, leaked := aiconf["ensure_reasoning_content"]
+		assert.False(t, leaked, "snake_case key must not leak into the export")
+	})
+
+	t.Run("IN-ERC-1-002 单协议导出", func(t *testing.T) {
+		name := createCluster(t, []string{"openai"})
+		defer testutil.DeleteCluster(name)
+
+		aiconf := exportAIConf(t, name)
+		if !assert.NotNil(t, aiconf) {
+			return
+		}
+		v, ok := aiconf["EnsureReasoningContent"].([]interface{})
+		if !assert.True(t, ok, "AIConf.EnsureReasoningContent should be an array") {
+			return
+		}
+		assert.Equal(t, []interface{}{"openai"}, v)
+	})
+
+	t.Run("IN-ERC-1-003 未配置集群导出为 null", func(t *testing.T) {
+		name := createCluster(t, nil)
+		defer testutil.DeleteCluster(name)
+
+		aiconf := exportAIConf(t, name)
+		if !assert.NotNil(t, aiconf) {
+			return
+		}
+		v, exists := aiconf["EnsureReasoningContent"]
+		// 导出结构体不带 omitempty：键存在且为 null（bfe 反序列化为 nil = 关闭），
+		// 与 NormalizeUpstreamError 的既有契约一致（design.md §19 / §20）。
+		assert.True(t, exists, "field key should be present (no omitempty)")
+		assert.Nil(t, v, "unset config must export as null (BFE disabled)")
 	})
 }

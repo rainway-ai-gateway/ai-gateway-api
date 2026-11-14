@@ -23,6 +23,7 @@ import (
 	"github.com/bfenetworks/bfe/bfe_config/bfe_cluster_conf/gslb_conf"
 	"github.com/rainway-ai-gateway/ai-gateway-api/lib"
 	"github.com/rainway-ai-gateway/ai-gateway-api/lib/xerror"
+	"github.com/rainway-ai-gateway/ai-gateway-api/model/iprovider"
 	"github.com/rainway-ai-gateway/ai-gateway-api/model/iversion_control"
 )
 
@@ -41,23 +42,89 @@ func (ctc *ClusterTableConf) UpdateVersion(version string) error {
 	return nil
 }
 
+// clusterTableConfGenerator generates the cluster_table export. Clusters
+// referencing a k8s_pool-mode provider resolve their instances in realtime
+// from k8s_pools (single source of truth, no mirror/derived snapshot); all
+// other clusters keep the historical snapshot path. All reads happen in the
+// caller's transaction context, so cluster/provider/k8s_pools views are
+// consistent; any read failure fails the whole export (fail-close) and the
+// data plane keeps the last successful version.
 func (rm *ClusterManager) clusterTableConfGenerator(ctx context.Context) (*iversion_control.ExportData, error) {
 	clusters, err := rm.storager.FetchClusterList(ctx, nil)
 	if err != nil {
 		return nil, err
 	}
 
+	// Fetch all providers once and index them by name to avoid an N+1 lookup
+	// per cluster. A missing provider (dirty data) falls back to the snapshot
+	// path below, preserving the pre-refactor behavior.
+	providerByName := map[string]*iprovider.Provider{}
+	if rm.providerStorager != nil {
+		providers, _, err := rm.providerStorager.FetchProviderList(ctx, nil)
+		if err != nil {
+			return nil, err
+		}
+		for _, p := range providers {
+			providerByName[p.Name] = p
+		}
+	}
+
+	// Request-level cache: one k8s_pools read per pool name even when several
+	// clusters reference the same provider/pool.
+	poolCache := map[string][]iprovider.ProviderInstance{}
+
 	allClusters := cluster_table_conf.AllClusterBackend{}
 	for _, cluster := range clusters {
 		clusterBackend := map[string]cluster_table_conf.SubClusterBackend{}
 
+		var provider *iprovider.Provider
+		if cluster.LLMConfig != nil && cluster.LLMConfig.Provider != nil {
+			provider = providerByName[*cluster.LLMConfig.Provider]
+		}
+		k8sMode := provider != nil && provider.InstanceSource == iprovider.InstanceSourceK8sPool
+
+		var k8sInstances []iprovider.ProviderInstance
+		if k8sMode {
+			poolName := ""
+			if provider.K8sPoolName != nil {
+				poolName = *provider.K8sPoolName
+			}
+			if cached, ok := poolCache[poolName]; ok {
+				k8sInstances = cached
+			} else {
+				if rm.instancePoolResolver == nil {
+					return nil, xerror.WrapModelErrorWithMsg(
+						"resolve k8s pool %q for cluster %q: instance pool resolver is not configured",
+						poolName, cluster.Name)
+				}
+				inst, err := rm.instancePoolResolver.Effective(ctx, provider)
+				if err != nil {
+					return nil, xerror.WrapModelErrorWithMsg(
+						"resolve k8s pool %q for cluster %q: %v", poolName, cluster.Name, err)
+				}
+				poolCache[poolName] = inst
+				k8sInstances = inst
+			}
+		}
+
 		for _, subCluster := range cluster.SubClusters {
-			if subCluster.InstancePool == nil || len(subCluster.InstancePool.Instances) == 0 {
+			var instances []Instance
+			if k8sMode {
+				// Same semantics as the removed fan-out: the provider's k8s
+				// instances apply to every subcluster of the cluster.
+				instances = providerInstancesToClusterInstances(k8sInstances)
+			} else {
+				if subCluster.InstancePool == nil {
+					continue
+				}
+				instances = subCluster.InstancePool.Instances
+			}
+			if len(instances) == 0 {
 				continue
 			}
 
-			subClusterBackend := make(cluster_table_conf.SubClusterBackend, 0, len(subCluster.InstancePool.Instances))
-			for _, instance := range subCluster.InstancePool.Instances {
+			subClusterBackend := make(cluster_table_conf.SubClusterBackend, 0, len(instances))
+			for _, instance := range instances {
 				addr := instance.Addr
 				// IPv6 地址需要加 [] 包裹
 				if ip := net.ParseIP(addr); ip != nil && ip.To4() == nil {

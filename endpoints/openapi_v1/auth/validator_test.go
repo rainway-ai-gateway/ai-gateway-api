@@ -200,3 +200,107 @@ func TestUserUpdatePasswordParamValidate(t *testing.T) {
 		})
 	}
 }
+
+func TestUserNameParamValidate(t *testing.T) {
+	cases := []struct {
+		name    string
+		param   *UserNameParam
+		wantErr bool
+	}{
+		{
+			name:    "valid",
+			param:   &UserNameParam{UserName: lib.PString("user1")},
+			wantErr: false,
+		},
+		{
+			name:    "reserved name is a valid reference",
+			param:   &UserNameParam{UserName: lib.PString("admin")},
+			wantErr: false,
+		},
+		{
+			// issue #308: the storage comparison is PAD SPACE insensitive,
+			// so "u " would match the real user "u" without this check.
+			name:    "trailing space",
+			param:   &UserNameParam{UserName: lib.PString("u ")},
+			wantErr: true,
+		},
+		{
+			name:    "leading space",
+			param:   &UserNameParam{UserName: lib.PString(" u")},
+			wantErr: true,
+		},
+		{
+			name:    "out-of-charset character",
+			param:   &UserNameParam{UserName: lib.PString("u+1")},
+			wantErr: true,
+		},
+		{
+			name:    "edge dot",
+			param:   &UserNameParam{UserName: lib.PString(".user")},
+			wantErr: true,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := tc.param.Validate()
+			if tc.wantErr {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestTokenNameParamValidate(t *testing.T) {
+	cases := []struct {
+		name    string
+		param   *TokenNameParam
+		wantErr bool
+	}{
+		{
+			name:    "valid",
+			param:   &TokenNameParam{TokenName: lib.PString("token_1")},
+			wantErr: false,
+		},
+		{
+			name:    "reserved name is a valid reference",
+			param:   &TokenNameParam{TokenName: lib.PString("default")},
+			wantErr: false,
+		},
+		{
+			// issue #308: the storage comparison is PAD SPACE insensitive,
+			// so "t " would match the real token "t" without this check.
+			name:    "trailing space",
+			param:   &TokenNameParam{TokenName: lib.PString("t ")},
+			wantErr: true,
+		},
+		{
+			name:    "leading space",
+			param:   &TokenNameParam{TokenName: lib.PString(" t")},
+			wantErr: true,
+		},
+		{
+			name:    "out-of-charset character",
+			param:   &TokenNameParam{TokenName: lib.PString("t+1")},
+			wantErr: true,
+		},
+		{
+			name:    "edge dash",
+			param:   &TokenNameParam{TokenName: lib.PString("-token")},
+			wantErr: true,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := tc.param.Validate()
+			if tc.wantErr {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}

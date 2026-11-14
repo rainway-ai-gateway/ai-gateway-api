@@ -128,7 +128,7 @@ func (p *UpsertParam) Validate() error {
 		return err
 	}
 	if p.LLMConfig != nil {
-		return validate.LLMConfig(p.LLMConfig)
+		return icluster_conf.ValidateLLMConfig(p.LLMConfig)
 	}
 	return nil
 }
@@ -445,6 +445,8 @@ func normalizeLLMConfig(llm *icluster_conf.LLMConfig) *icluster_conf.LLMConfig {
 		KeyPolicy:              llm.KeyPolicy,
 		KeyAffinity:            normalizeKeyAffinity(llm.KeyAffinity),
 		NormalizeUpstreamError: llm.NormalizeUpstreamError,
+		EnsureReasoningContent: llm.EnsureReasoningContent,
+		PriceMissAction:        llm.PriceMissAction,
 		Provider:               llm.Provider,
 		MatchPrefix:            llm.MatchPrefix,
 		StripPrefix:            llm.StripPrefix,
@@ -463,6 +465,8 @@ func normalizeKeyAffinity(affinity *icluster_conf.KeyAffinity) *icluster_conf.Ke
 		rst.TTL = affinity.TTL
 		rst.RedisPrefix = affinity.RedisPrefix
 		rst.PenaltyEnable = affinity.PenaltyEnable
+		rst.PenaltyTTL429 = affinity.PenaltyTTL429
+		rst.PenaltyTTLAuth = affinity.PenaltyTTLAuth
 	}
 	if rst.Enabled == nil {
 		rst.Enabled = lib.PBool(true)
@@ -475,6 +479,12 @@ func normalizeKeyAffinity(affinity *icluster_conf.KeyAffinity) *icluster_conf.Ke
 	}
 	if rst.PenaltyEnable == nil {
 		rst.PenaltyEnable = lib.PBool(true)
+	}
+	if rst.PenaltyTTL429 == nil {
+		rst.PenaltyTTL429 = lib.PInt(60)
+	}
+	if rst.PenaltyTTLAuth == nil {
+		rst.PenaltyTTLAuth = lib.PInt(300)
 	}
 
 	return rst

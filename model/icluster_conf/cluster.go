@@ -225,6 +225,12 @@ type KeyAffinity struct {
 	TTL           *int    `json:"ttl"`            // idle timeout in seconds, default 600
 	RedisPrefix   *string `json:"redis_prefix"`   // default "bfe:ai:key_affinity"
 	PenaltyEnable *bool   `json:"penalty_enable"` // default true
+	// Penalty TTL (seconds) written when an upstream key becomes unusable.
+	// nil means "unset" and is filled with the default; an explicit value out of
+	// range is rejected by validation. 0 is NOT "disabled" (Redis treats
+	// expire=0 as "never expire").
+	PenaltyTTL429  *int `json:"penalty_ttl_429"`  // upstream 429, default 60
+	PenaltyTTLAuth *int `json:"penalty_ttl_auth"` // upstream 401/402/403, default 300
 }
 
 // NormalizeUpstreamError configures upstream error normalization (unified
@@ -248,7 +254,19 @@ type LLMConfig struct {
 	KeyPolicy              *KeyPolicy              `json:"key_policy"`               // key routing policy
 	KeyAffinity            *KeyAffinity            `json:"key_affinity"`             // session-level key affinity
 	NormalizeUpstreamError *NormalizeUpstreamError `json:"normalize_upstream_error"` // upstream error normalization (unified error codes)
-	Provider               *string                 `json:"provider"`                 // provider name; required
+	// EnsureReasoningContent lists the model access protocols for which the
+	// gateway fills an empty reasoning_content on the assistant messages that
+	// sit after the last user message (the window the upstream validates).
+	// Only "openai" and "anthropic" are accepted: gemini has no such field in
+	// its contents/parts body. Nil/empty disables the behaviour and keeps the
+	// request byte-for-byte unchanged.
+	EnsureReasoningContent []string `json:"ensure_reasoning_content"`
+	// PriceMissAction controls bfe's behavior when the (model, mode) price
+	// entry is absent (issue #1479): "fallback_chat" (bill at the model's
+	// chat-mode price, default when unset), "bill_zero" (bill 0) or "reject"
+	// (reject before forwarding). Nil keeps bfe's default (fallback_chat).
+	PriceMissAction *string `json:"price_miss_action"`
+	Provider        *string `json:"provider"` // provider name; required
 
 	// MatchPrefix defines the provider/model prefix this cluster matches.
 	// Must end with '/' to avoid matching model names themselves.
@@ -408,6 +426,7 @@ type ClusterManager struct {
 	versionControlManager *iversion_control.VersionControlManager
 	operationLogManager   ioperlog.OperationLogRecorder
 	eppPoolManager        *epp_pool.EppPoolManager
+	instancePoolResolver  *iprovider.InstancePoolResolver
 
 	deleteCheckers map[string]func(context.Context, *ibasic.Product, *Cluster) error
 	updateCheckers map[string]func(context.Context, *ibasic.Product, *Cluster, *ClusterParam) error
@@ -423,6 +442,12 @@ func (cm *ClusterManager) SetOperationLogManager(manager ioperlog.OperationLogRe
 // block cluster writes; the periodic reconciler converges (design-changes.md §2.3).
 func (cm *ClusterManager) SetEppPoolManager(manager *epp_pool.EppPoolManager) {
 	cm.eppPoolManager = manager
+}
+
+// SetInstancePoolResolver injects the resolver used by the cluster_table
+// exporter to resolve k8s_pool-mode provider instances at export time.
+func (cm *ClusterManager) SetInstancePoolResolver(resolver *iprovider.InstancePoolResolver) {
+	cm.instancePoolResolver = resolver
 }
 
 func (rm *ClusterManager) FetchClusterList(ctx context.Context, param *ClusterFilter) (list []*Cluster, err error) {
@@ -517,15 +542,22 @@ func (cm *ClusterManager) CreateCluster(ctx context.Context, product *ibasic.Pro
 			// balance_mode=EPP creates a Role=EPP pool that still carries the
 			// provider instance list, so cluster_table export has RS entries for
 			// EPP backend discovery and BFE local fallback (design-changes.md §2.3);
-			// WRR keeps the same provider-snapshot path. The snapshot uses the
-			// provider's effective pool, so a k8s_pool-mode provider with an
-			// empty mirror yields an empty (but present) pool — the clear
-			// semantics required by the k8s_pool flow.
+			// WRR keeps the same provider-snapshot path. The snapshot is
+			// source-based: manual providers persist their instance_pool, while
+			// k8s providers only get an empty placeholder row — the derived pool
+			// merely satisfies the subcluster -> pool schema reference, because
+			// k8s instances are resolved in realtime from k8s_pools at export
+			// time and must never be snapshotted here.
 			poolRole := ProductPoolRoleCommon
 			if balanceMode == BalanceModeEPP {
 				poolRole = ProductPoolRoleEPP
 			}
-			poolInstances := providerInstancesToClusterInstances(iprovider.EffectiveInstancePool(provider))
+			var poolInstances []Instance
+			if provider.InstanceSource == iprovider.InstanceSourceK8sPool {
+				poolInstances = providerInstancesToClusterInstances(nil)
+			} else {
+				poolInstances = providerInstancesToClusterInstances(provider.InstancePool)
+			}
 
 			pool, err := cm.poolStorager.CreatePool(ctx, product, &PoolParam{
 				Name:      &poolName,
@@ -658,6 +690,27 @@ func (cm *ClusterManager) validateClusterLLMConfigAgainstProvider(llm *LLMConfig
 			}
 			if !providerKeys[*k.Name] {
 				return xerror.WrapParamErrorWithMsg("key %s not found in provider %s", *k.Name, provider.Name)
+			}
+		}
+	}
+
+	// EnsureReasoningContent only makes sense for protocols the provider
+	// actually serves. An empty provider model_protocols means ["openai"],
+	// mirroring bfe's modelprotocol.Supports so an accepted config never fails
+	// the bfe load.
+	if len(llm.EnsureReasoningContent) > 0 {
+		providerProtocols := map[string]bool{}
+		for _, p := range provider.ModelProtocols {
+			providerProtocols[p] = true
+		}
+		if len(providerProtocols) == 0 {
+			providerProtocols["openai"] = true
+		}
+		for _, p := range llm.EnsureReasoningContent {
+			if !providerProtocols[p] {
+				return xerror.WrapParamErrorWithMsg(
+					"ensure_reasoning_content %q not supported by provider %s (model_protocols=%v)",
+					p, provider.Name, provider.ModelProtocols)
 			}
 		}
 	}
@@ -824,16 +877,33 @@ func (cm *ClusterManager) UpdateCluster(ctx context.Context, product *ibasic.Pro
 				return err
 			}
 
-			// Sync instance pool whenever the cluster references a provider, so
-			// that the cluster pool reflects the provider's current instance_pool
-			// regardless of whether the provider name changed.
+			// Sync the derived pool whenever the cluster references a provider.
+			// The write is source-based: manual providers persist their
+			// instance_pool snapshot; k8s providers never write instance data —
+			// their derived pool is an empty placeholder and k8s instances are
+			// resolved in realtime at export time. On a provider change the
+			// placeholder invariant is enforced by clearing any stale snapshot.
 			oldProvider := ""
 			if oldData.LLMConfig != nil && oldData.LLMConfig.Provider != nil {
 				oldProvider = *oldData.LLMConfig.Provider
 			}
 			providerChanged := oldProvider != *param.LLMConfig.Provider
 			providerUnchangedButReferenced := oldProvider == *param.LLMConfig.Provider && oldProvider != ""
-			if providerChanged || providerUnchangedButReferenced {
+			if provider.InstanceSource == iprovider.InstanceSourceK8sPool {
+				if providerChanged {
+					for _, sc := range oldData.SubClusters {
+						if sc.InstancePool == nil {
+							continue
+						}
+						if err = cm.poolStorager.UpdatePool(ctx, sc.InstancePool, &PoolParam{
+							Instances: providerInstancesToClusterInstances(nil),
+						}); err != nil {
+							return err
+						}
+					}
+				}
+				// provider unchanged: the placeholder is already empty, no write.
+			} else if providerChanged || providerUnchangedButReferenced {
 				for _, sc := range oldData.SubClusters {
 					if sc.InstancePool != nil {
 						if err = cm.poolStorager.UpdatePool(ctx, sc.InstancePool, &PoolParam{
@@ -944,17 +1014,14 @@ func providerModelsEqual(a, b []string) bool {
 	return true
 }
 
-// SyncProviderEffectivePool propagates the provider's effective instance pool
-// to every sub-cluster pool of clusters referencing the provider. An empty
-// effective pool is written as an empty instance list (clear semantics): K8s
-// instances come and go dynamically, and "pool does not exist" must be
-// equivalent to "zero instances" downstream. EPP-role pools are synced as
-// well since they carry the provider instance snapshot for EPP backend
-// discovery and BFE local fallback.
-func (cm *ClusterManager) SyncProviderEffectivePool(ctx context.Context, provider *iprovider.Provider) error {
-	if provider == nil {
-		return nil
-	}
+// SyncProviderInstances writes the given instance list into every sub-cluster
+// pool of clusters referencing the named provider. An empty/nil list is
+// written as an explicit empty instance list (clear semantics), so a stale
+// manual snapshot never survives a mode switch. This function only ever
+// carries manual instances or an empty list — k8s instances are resolved in
+// realtime at export time and are never persisted into derived pools.
+func (cm *ClusterManager) SyncProviderInstances(ctx context.Context,
+	providerName string, instances []iprovider.ProviderInstance) error {
 
 	clusters, err := cm.storager.FetchClusterList(ctx, nil)
 	if err != nil {
@@ -962,14 +1029,14 @@ func (cm *ClusterManager) SyncProviderEffectivePool(ctx context.Context, provide
 	}
 
 	// providerInstancesToClusterInstances always returns a non-nil slice, so
-	// an empty effective pool is stored as "[]" instead of being skipped by
-	// the DAO nil-skip (which would leave stale instances behind).
-	newInstances := providerInstancesToClusterInstances(iprovider.EffectiveInstancePool(provider))
+	// an empty pool is stored as "[]" instead of being skipped by the DAO
+	// nil-skip (which would leave stale instances behind).
+	newInstances := providerInstancesToClusterInstances(instances)
 	for _, cluster := range clusters {
 		if cluster.LLMConfig == nil || cluster.LLMConfig.Provider == nil {
 			continue
 		}
-		if *cluster.LLMConfig.Provider != provider.Name {
+		if *cluster.LLMConfig.Provider != providerName {
 			continue
 		}
 
@@ -989,22 +1056,41 @@ func (cm *ClusterManager) SyncProviderEffectivePool(ctx context.Context, provide
 }
 
 // ProviderInstancePoolSyncer returns a hook suitable for passing to
-// iprovider.ProviderManager.UpdateProvider. When the provider's effective
-// instance pool changes (including mode switches and becoming empty), it
-// updates the instance pool of every sub-cluster that references the provider
-// to match the new effective instances.
+// iprovider.ProviderManager.UpdateProvider. The derived-pool write is
+// source-based:
+//   - k8s -> k8s (incl. k8s_pool_name A->B): the placeholder row stays empty,
+//     nothing is written;
+//   - manual -> k8s: the old manual snapshot is cleared so the derived pool
+//     keeps the empty-placeholder invariant;
+//   - k8s -> manual / manual instance_pool change: the new manual pool is
+//     written into the derived pools.
+//
+// K8s instances are never written here (they are resolved at export time).
 func (cm *ClusterManager) ProviderInstancePoolSyncer(ctx context.Context,
 	oldProvider, newProvider *iprovider.Provider) error {
 
 	if newProvider == nil {
 		return nil
 	}
-	if oldProvider != nil && providerInstancePoolEqual(
-		iprovider.EffectiveInstancePool(oldProvider), iprovider.EffectiveInstancePool(newProvider)) {
-		return nil
+
+	if newProvider.InstanceSource == iprovider.InstanceSourceK8sPool {
+		if oldProvider != nil && oldProvider.InstanceSource == iprovider.InstanceSourceK8sPool {
+			// k8s -> k8s (including pool-name switch): the placeholder is
+			// unchanged; the exporter resolves the new pool at read time.
+			return nil
+		}
+		// manual -> k8s: clear the old manual snapshot to keep the derived
+		// pool an empty placeholder.
+		return cm.SyncProviderInstances(ctx, newProvider.Name, nil)
 	}
 
-	return cm.SyncProviderEffectivePool(ctx, newProvider)
+	// Manual source: propagate the manual instance_pool snapshot.
+	if oldProvider != nil &&
+		oldProvider.InstanceSource != iprovider.InstanceSourceK8sPool &&
+		providerInstancePoolEqual(oldProvider.InstancePool, newProvider.InstancePool) {
+		return nil
+	}
+	return cm.SyncProviderInstances(ctx, newProvider.Name, newProvider.InstancePool)
 }
 
 // ProviderKeyRefChecker returns a hook that verifies all clusters referencing
@@ -1085,6 +1171,47 @@ func (cm *ClusterManager) ProviderModelRefChecker(ctx context.Context,
 				return xerror.WrapConflictErrorWithMsg(
 					"provider %s model %s is referenced by cluster %s",
 					newProvider.Name, m, cluster.Name)
+			}
+		}
+	}
+
+	return nil
+}
+
+// ProviderProtocolRefChecker rejects a model_protocols narrowing that would
+// leave a referencing cluster's ensure_reasoning_content invalid: bfe's
+// AIConfCheck requires every entry to be declared by ModelProtocols, and an
+// invalid export makes the whole cluster_conf topic fail to reload (bfe keeps
+// the previous configuration while conf-agent keeps alerting).
+func (cm *ClusterManager) ProviderProtocolRefChecker(ctx context.Context,
+	oldProvider, newProvider *iprovider.Provider) error {
+
+	if newProvider == nil {
+		return nil
+	}
+
+	declared := make(map[string]bool, len(newProvider.ModelProtocols))
+	for _, p := range newProvider.ModelProtocols {
+		declared[p] = true
+	}
+
+	clusters, err := cm.storager.FetchClusterList(ctx, nil)
+	if err != nil {
+		return err
+	}
+
+	for _, cluster := range clusters {
+		if cluster.LLMConfig == nil || cluster.LLMConfig.Provider == nil {
+			continue
+		}
+		if *cluster.LLMConfig.Provider != newProvider.Name {
+			continue
+		}
+		for _, p := range cluster.LLMConfig.EnsureReasoningContent {
+			if !declared[p] {
+				return xerror.WrapConflictErrorWithMsg(
+					"provider %s model_protocols %s is referenced by cluster %s ensure_reasoning_content",
+					newProvider.Name, p, cluster.Name)
 			}
 		}
 	}
@@ -1570,6 +1697,9 @@ func newAIConf(llmConfig *LLMConfig, modelTable *cluster_conf.ModelTable,
 		SessionAffinityTTL:           600,
 		SessionAffinityRedisPrefix:   "bfe:ai:key_affinity",
 		SessionAffinityPenaltyEnable: true,
+		// Keep in sync with AIKeyPolicyCheck defaults on the data plane.
+		SessionAffinityPenaltyTTL429:  60,
+		SessionAffinityPenaltyTTLAuth: 300,
 	}
 	if llmConfig.KeyPolicy != nil {
 		aiConf.KeyPolicy.Strategy = derefString(llmConfig.KeyPolicy.Strategy, "weighted_random")
@@ -1582,7 +1712,12 @@ func newAIConf(llmConfig *LLMConfig, modelTable *cluster_conf.ModelTable,
 		aiConf.KeyPolicy.SessionAffinityTTL = derefInt(llmConfig.KeyAffinity.TTL, 600)
 		aiConf.KeyPolicy.SessionAffinityRedisPrefix = derefString(llmConfig.KeyAffinity.RedisPrefix, "bfe:ai:key_affinity")
 		aiConf.KeyPolicy.SessionAffinityPenaltyEnable = derefBool(llmConfig.KeyAffinity.PenaltyEnable, true)
+		aiConf.KeyPolicy.SessionAffinityPenaltyTTL429 = derefInt(llmConfig.KeyAffinity.PenaltyTTL429, 60)
+		aiConf.KeyPolicy.SessionAffinityPenaltyTTLAuth = derefInt(llmConfig.KeyAffinity.PenaltyTTLAuth, 300)
 	}
+	// issue #1479: empty string keeps the field unset on the bfe side
+	// (AIConfCheck normalizes empty to the fallback_chat default).
+	aiConf.PriceMissAction = derefString(llmConfig.PriceMissAction, "")
 	if llmConfig.NormalizeUpstreamError != nil {
 		aiConf.NormalizeUpstreamError = &cluster_conf.UpstreamErrorNormalizeConf{
 			Enabled:            derefBool(llmConfig.NormalizeUpstreamError.Enabled, false),
@@ -1594,6 +1729,9 @@ func newAIConf(llmConfig *LLMConfig, modelTable *cluster_conf.ModelTable,
 			RedactSecrets: llmConfig.NormalizeUpstreamError.RedactSecrets,
 		}
 	}
+	// nil passthrough: the key stays absent from the export, and the zero
+	// value on the bfe side means "disabled".
+	aiConf.EnsureReasoningContent = llmConfig.EnsureReasoningContent
 
 	return aiConf
 }

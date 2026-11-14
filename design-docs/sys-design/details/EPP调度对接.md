@@ -65,7 +65,8 @@ cluster（唯一键）, group_name（分配粒度为组）
 | `prefix_cache_affinity` | `true` | 前缀缓存亲和 scorer 开关（软亲和，权重固定 1.0；本地内存 LRU，无外部存储） |
 | `session_affinity_enabled` / `session_affinity_header` | `false` / - | 会话亲和开关 + session id 来源请求头（enabled=true 时 header 必填；false 时 header 可休眠保留） |
 | `kv_cache_utilization_max` | `0.9` | utilization-filter 阈值 `(0,1]` |
-| `flow_control` | - | `max_requests`（缺省/-1 不限）、`queue_ttl`/`no_endpoint_queue_ttl`（int 秒，≥0，0=禁用驱逐；缺省由 EPP 默认 60s）、`enable_eviction` |
+| `epp_runtime.timeout.call` | `11s` | EPP 调用超时（首条消息）；须大于 `max(queue_ttl, no_endpoint_queue_ttl)`，与队列 TTL 默认 9s 搭配 |
+| `flow_control` | - | `max_requests`（缺省/-1 不限）、`queue_ttl`/`no_endpoint_queue_ttl`（int 秒，≥0，0=禁用驱逐；缺省由 api 补齐 **9s**，不再回落 llm-d 的 60s）、`enable_eviction` |
 
 api 导出时把简化配置**确定性编译**为完整 `EndpointPickerConfig`（档位权重映射、亲和 scorer 条件注入、flowControl 段展开、featureGates 追加、固定插件注入），规则固化并单测覆盖；本期不提供原样透传的高级模式。秒数在编译时转为 Go duration 下发（`30` → `30s`）。
 

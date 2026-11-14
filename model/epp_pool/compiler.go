@@ -193,6 +193,11 @@ const (
 	// max_requests is unlimited (-1 or unset). Larger than the llm-d hidden
 	// default (5000); with the default 60s request TTL it only binds above
 	// ~166 req/s sustained dispatch halt.
+	// 队列 TTL 默认值（秒）。EPP 侧默认 60s 会让「调用超时(defaultRequestTTL 需大于
+	// 排队预算)」这一约束在默认配置下不成立，故由 api 显式补 9s，与 epp_runtime
+	// 调用超时默认 11s 搭配（11 > 9）。
+	defaultFlowControlQueueTTLSeconds = 9
+
 	defaultPriorityBandMaxRequests = "10000"
 	// defaultPriorityBandMaxBytes covers long-prompt / multimodal bodies
 	// (larger than the llm-d hidden default of 1GB).
@@ -424,13 +429,17 @@ func compileFlowControl(conf *EppConfigSimplified) *FlowControlConfig {
 
 		if fc.QueueTTL != nil {
 			compiled.DefaultRequestTTL = secondsToDuration(*fc.QueueTTL)
+		} else {
+			// 未配置队列 TTL：显式补默认 9s，避免回落到 llm-d 的 60s
+			// （60s 大于调用超时默认 11s，默认组合不满足 call > max(TTL) 约束）
+			compiled.DefaultRequestTTL = secondsToDuration(defaultFlowControlQueueTTLSeconds)
 		}
 
 		// no_endpoint_queue_ttl defaults to queue_ttl (expanded explicitly).
 		if fc.NoEndpointQueueTTL != nil {
 			compiled.NoEndpointRequestTTL = secondsToDuration(*fc.NoEndpointQueueTTL)
-		} else if fc.QueueTTL != nil {
-			compiled.NoEndpointRequestTTL = secondsToDuration(*fc.QueueTTL)
+		} else {
+			compiled.NoEndpointRequestTTL = compiled.DefaultRequestTTL
 		}
 	} else {
 		band.MaxRequests = defaultPriorityBandMaxRequests

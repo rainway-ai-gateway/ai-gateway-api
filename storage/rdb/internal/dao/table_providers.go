@@ -27,22 +27,21 @@ const tProviderTableName = "providers"
 
 // TProvider is the DAO representation of a providers row.
 type TProvider struct {
-	ID              int64     `db:"id"`
-	Name            string    `db:"name"`
-	Description     string    `db:"description"`
-	ModelEndpoint   string    `db:"model_endpoint"`
-	Models          string    `db:"models"`
-	Keys            string    `db:"api_keys"`
-	InstancePool    string    `db:"instance_pool"`
-	InstanceSource  string    `db:"instance_source"`
-	K8sPoolName     string    `db:"k8s_pool_name"`
-	K8sInstancePool string    `db:"k8s_instance_pool"`
-	ModelProtocols  string    `db:"model_protocols"`
-	ProtocolPaths   string    `db:"protocol_paths"`
-	TimeZone        string    `db:"time_zone"`
-	Tiers           string    `db:"tiers"`
-	CreatedAt       time.Time `db:"created_at"`
-	UpdatedAt       time.Time `db:"updated_at"`
+	ID             int64     `db:"id"`
+	Name           string    `db:"name"`
+	Description    string    `db:"description"`
+	ModelEndpoint  string    `db:"model_endpoint"`
+	Models         string    `db:"models"`
+	Keys           string    `db:"api_keys"`
+	InstancePool   string    `db:"instance_pool"`
+	InstanceSource string    `db:"instance_source"`
+	K8sPoolName    string    `db:"k8s_pool_name"`
+	ModelProtocols string    `db:"model_protocols"`
+	ProtocolPaths  string    `db:"protocol_paths"`
+	TimeZone       string    `db:"time_zone"`
+	Tiers          string    `db:"tiers"`
+	CreatedAt      time.Time `db:"created_at"`
+	UpdatedAt      time.Time `db:"updated_at"`
 }
 
 // TProviderOne queries one provider.
@@ -73,6 +72,9 @@ func TProviderList(dbCtx lib.DBContexter, where *TProviderParam) ([]*TProvider, 
 
 // TProviderListAll queries all providers without pagination.
 func TProviderListAll(dbCtx lib.DBContexter, where *TProviderParam) ([]*TProvider, error) {
+	if where == nil {
+		where = &TProviderParam{}
+	}
 	orderBy := "id"
 	where.OrderBy = &orderBy
 	t := []*TProvider{}
@@ -177,23 +179,22 @@ func TProviderCount(dbCtx lib.DBContexter, where *TProviderParam) (int64, error)
 
 // TProviderParam is used for create/update/delete/where conditions.
 type TProviderParam struct {
-	ID              *int64     `db:"id"`
-	Name            *string    `db:"name"`
-	Names           []string   `db:"name,in"`
-	Description     *string    `db:"description"`
-	ModelEndpoint   *string    `db:"model_endpoint"`
-	Models          *string    `db:"models"`
-	Keys            *string    `db:"api_keys"`
-	InstancePool    *string    `db:"instance_pool"`
-	InstanceSource  *string    `db:"instance_source"`
-	K8sPoolName     *string    `db:"k8s_pool_name"`
-	K8sInstancePool *string    `db:"k8s_instance_pool"`
-	ModelProtocols  *string    `db:"model_protocols"`
-	ProtocolPaths   *string    `db:"protocol_paths"`
-	TimeZone        *string    `db:"time_zone"`
-	Tiers           *string    `db:"tiers"`
-	CreatedAt       *time.Time `db:"created_at"`
-	UpdatedAt       *time.Time `db:"updated_at"`
+	ID             *int64     `db:"id"`
+	Name           *string    `db:"name"`
+	Names          []string   `db:"name,in"`
+	Description    *string    `db:"description"`
+	ModelEndpoint  *string    `db:"model_endpoint"`
+	Models         *string    `db:"models"`
+	Keys           *string    `db:"api_keys"`
+	InstancePool   *string    `db:"instance_pool"`
+	InstanceSource *string    `db:"instance_source"`
+	K8sPoolName    *string    `db:"k8s_pool_name"`
+	ModelProtocols *string    `db:"model_protocols"`
+	ProtocolPaths  *string    `db:"protocol_paths"`
+	TimeZone       *string    `db:"time_zone"`
+	Tiers          *string    `db:"tiers"`
+	CreatedAt      *time.Time `db:"created_at"`
+	UpdatedAt      *time.Time `db:"updated_at"`
 
 	OrderBy *string `db:"_orderby"`
 }

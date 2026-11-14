@@ -282,7 +282,68 @@ func TestQuotaPlanManager_ApplyQuotaPlanChange(t *testing.T) {
 
 		require.Len(t, cache.setRemainingCalls, 1)
 		assert.Equal(t, apiKeyID, cache.setRemainingCalls[0].key)
-		assert.Equal(t, float64(0), *cache.setRemainingCalls[0].quota)
+		// issue #1476: used(60) > newQuota(50)，targetRemaining 允许为负，
+		// 表示新配额仍不足以覆盖已用量；不再钳零（钳零会凭空抹掉欠费）。
+		assert.Equal(t, float64(-10), *cache.setRemainingCalls[0].quota)
+	})
+
+	t.Run("quota increased while in arrears keeps overage", func(t *testing.T) {
+		// issue #1476: remaining 为负（欠费）时 used = oldQuota - remaining
+		// 如实大于 oldQuota；调大配额后 targetRemaining = newQuota - used。
+		planStore := &fakeQuotaPlanStorager{
+			fetchFn: func(ctx context.Context, filter *QuotaPlanFilter) (*QuotaPlanParam, error) {
+				return &QuotaPlanParam{ID: lib.PInt64(planID), Quota: lib.PFloat64(200), Unit: lib.PString("total_token")}, nil
+			},
+		}
+		apiKeyStore := &fakeAPIKeyStorager{
+			fetchListFn: func(ctx context.Context, filter *api_key.APIKeyFilter) ([]*api_key.APIKeyParam, error) {
+				return []*api_key.APIKeyParam{{Key: &apiKeyID}}, nil
+			},
+		}
+		cache := &fakeQuotaCache{
+			batchGetRemainingFn: func(ctx context.Context, keys []string, unit *string) (map[string]float64, error) {
+				return map[string]float64{apiKeyID: -40}, nil
+			},
+		}
+		m := NewQuotaPlanManager(&fakeTxn{}, planStore, apiKeyStore, &fakeEntityStorager{}, cache)
+
+		oldPlan := &shared.QuotaPlanParam{Quota: lib.PFloat64(100), Unit: lib.PString("total_token")}
+		newPlan := &shared.QuotaPlanParam{Quota: lib.PFloat64(200), Unit: lib.PString("total_token")}
+		err := m.ApplyQuotaPlanChange(ctx, planID, oldPlan, newPlan)
+		require.NoError(t, err)
+
+		require.Len(t, cache.setRemainingCalls, 1)
+		// used = 100 - (-40) = 140；targetRemaining = 200 - 140 = 60。
+		assert.Equal(t, float64(60), *cache.setRemainingCalls[0].quota)
+	})
+
+	t.Run("quota raised but still below usage stays negative", func(t *testing.T) {
+		// issue #1476: 新配额仍低于 used 时 targetRemaining 为负，鉴权继续拒绝。
+		planStore := &fakeQuotaPlanStorager{
+			fetchFn: func(ctx context.Context, filter *QuotaPlanFilter) (*QuotaPlanParam, error) {
+				return &QuotaPlanParam{ID: lib.PInt64(planID), Quota: lib.PFloat64(120), Unit: lib.PString("total_token")}, nil
+			},
+		}
+		apiKeyStore := &fakeAPIKeyStorager{
+			fetchListFn: func(ctx context.Context, filter *api_key.APIKeyFilter) ([]*api_key.APIKeyParam, error) {
+				return []*api_key.APIKeyParam{{Key: &apiKeyID}}, nil
+			},
+		}
+		cache := &fakeQuotaCache{
+			batchGetRemainingFn: func(ctx context.Context, keys []string, unit *string) (map[string]float64, error) {
+				return map[string]float64{apiKeyID: -40}, nil
+			},
+		}
+		m := NewQuotaPlanManager(&fakeTxn{}, planStore, apiKeyStore, &fakeEntityStorager{}, cache)
+
+		oldPlan := &shared.QuotaPlanParam{Quota: lib.PFloat64(100), Unit: lib.PString("total_token")}
+		newPlan := &shared.QuotaPlanParam{Quota: lib.PFloat64(120), Unit: lib.PString("total_token")}
+		err := m.ApplyQuotaPlanChange(ctx, planID, oldPlan, newPlan)
+		require.NoError(t, err)
+
+		require.Len(t, cache.setRemainingCalls, 1)
+		// used = 140；targetRemaining = 120 - 140 = -20。
+		assert.Equal(t, float64(-20), *cache.setRemainingCalls[0].quota)
 	})
 
 	t.Run("unit changed resets to new quota", func(t *testing.T) {

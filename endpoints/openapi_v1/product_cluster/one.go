@@ -36,6 +36,7 @@ import (
 	"github.com/rainway-ai-gateway/ai-gateway-api/model/icluster_conf"
 	"github.com/rainway-ai-gateway/ai-gateway-api/stateful/container"
 
+	"github.com/rainway-ai-gateway/ai-gateway-api/lib/validate"
 	"github.com/rainway-ai-gateway/ai-gateway-api/lib/xerror"
 	"github.com/rainway-ai-gateway/ai-gateway-api/lib/xreq"
 )
@@ -84,6 +85,14 @@ type Timeouts struct {
 // OneParam Request Param
 type OneParam struct {
 	Name *string `uri:"cluster_name" validate:"required,min=1"`
+}
+
+// Validate performs centralized business validation on the request parameters.
+// The charset check keeps GET/DELETE/ready consistent with PATCH/POST (which
+// validate via UpsertParam): an illegal cluster_name is a 422 Param Illegal,
+// not a 404 Record Not Exist (issue #311).
+func (p *OneParam) Validate() error {
+	return validate.ClusterName(*p.Name)
 }
 
 type PassiveHealthCheck struct {

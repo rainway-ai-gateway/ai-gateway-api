@@ -127,7 +127,7 @@ func (m *AICacheManager) SetAICacheRules(ctx context.Context, param *shared.AICa
 		replaceRules = append(replaceRules, aiCacheRuleParamFromShared(rule))
 	}
 
-	err := m.txn.AtomExecute(ctx, func(ctx context.Context) error {
+	err := itxn.ExecuteWithRetry(ctx, m.txn, func(ctx context.Context) error {
 		return m.storager.ReplaceAll(ctx, replaceRules)
 	})
 	if err != nil {

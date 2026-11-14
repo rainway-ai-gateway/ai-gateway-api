@@ -34,7 +34,7 @@ const (
 	DefaultEppCooldown         = "45s"
 	DefaultEppSuccessThreshold = 2
 	DefaultEppConnectTimeout   = "500ms"
-	DefaultEppCallTimeout      = "3s"
+	DefaultEppCallTimeout      = "11s"
 )
 
 // EppRuntimeParam is the control-plane shape of the BFE-side EPP runtime

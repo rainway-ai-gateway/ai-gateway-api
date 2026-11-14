@@ -67,6 +67,16 @@ func fetchProviderData(t *testing.T, providerName string) map[string]interface{}
 	return data
 }
 
+// assertProviderHasNoMirror locks the contract: the k8s_instance_pool mirror
+// field was removed from the provider response.
+func assertProviderHasNoMirror(t *testing.T, providerName string) map[string]interface{} {
+	t.Helper()
+	data := fetchProviderData(t, providerName)
+	_, ok := data["k8s_instance_pool"]
+	assert.False(t, ok, "provider response must not contain the removed k8s_instance_pool field")
+	return data
+}
+
 func clusterTableConfig(t *testing.T, resp *testutil.APIResponse) map[string]interface{} {
 	t.Helper()
 	var data map[string]interface{}
@@ -117,11 +127,31 @@ func assertBackendNotExists(t *testing.T, resp *testutil.APIResponse, clusterNam
 	}
 }
 
-// TestK8sPool_EndToEnd exercises the full P1 contract (k8s-pools.md):
-// PUT pool -> create k8s_pool-mode provider -> mirror appears -> cluster
-// references provider -> export carries instances -> PUT adds/removes
-// instances -> export follows -> DELETE pool -> mirror cleared and export
-// becomes an empty entry.
+func exportClusterTable(t *testing.T) *testutil.APIResponse {
+	t.Helper()
+	resp, err := testutil.GetClient().Get("/inner-api/v1/configs/gslb_data/cluster_table")
+	require.NoError(t, err)
+	testutil.AssertSuccess(t, resp)
+	return resp
+}
+
+func createK8sCluster(t *testing.T, clusterName, providerName string) {
+	t.Helper()
+	_, err := testutil.GetClient().Post("/open-api/v1/clusters", map[string]interface{}{
+		"name": clusterName,
+		"llm_config": map[string]interface{}{
+			"models":   []string{"deepseek-chat"},
+			"provider": providerName,
+		},
+	})
+	require.NoError(t, err)
+}
+
+// TestK8sPool_EndToEnd exercises the full contract (k8s-pools.md) under
+// realtime resolution: PUT pool -> create k8s_pool-mode provider -> create
+// cluster WITHOUT any second pool PUT -> the export already carries the
+// instances. This is the regression for the "mirror hole" incident: the
+// provider created after the pool PUT used to see an empty mirror forever.
 func TestK8sPool_EndToEnd(t *testing.T) {
 	poolName := uniquePoolName()
 	providerName := testutil.UniqueProviderName()
@@ -149,48 +179,28 @@ func TestK8sPool_EndToEnd(t *testing.T) {
 	testutil.AssertDataFieldEquals(t, resp, "instance_count", float64(2))
 	testutil.AssertListFieldLen(t, resp, "instances", 2)
 
-	// 3. Create a k8s_pool-mode provider referencing the pool. The mirror is
-	// empty at this point because the provider was created after the PUT.
+	// 3. Create a k8s_pool-mode provider referencing the pool. No mirror
+	// exists anymore; the response carries only the reference.
 	_, err = testutil.CreateProvider(providerName, map[string]interface{}{
 		"instance_source": "k8s_pool",
 		"k8s_pool_name":   poolName,
 		"instance_pool":   []interface{}{},
 	})
 	require.NoError(t, err)
-	data := fetchProviderData(t, providerName)
+	data := assertProviderHasNoMirror(t, providerName)
 	assert.Equal(t, "k8s_pool", data["instance_source"])
 	assert.Equal(t, poolName, data["k8s_pool_name"])
-	mirror, _ := data["k8s_instance_pool"].([]interface{})
-	assert.Len(t, mirror, 0, "mirror stays empty until the next pool PUT")
 
-	// 4. Re-PUT the same instances: the fan-out fills the provider mirror.
-	resp = putInstances(t, poolName, []interface{}{
-		instanceBody("10.0.0.1", 8000, 100),
-		instanceBody("10.0.0.2", 8000, 100),
-	})
-	testutil.AssertSuccess(t, resp)
-	data = fetchProviderData(t, providerName)
-	mirror, _ = data["k8s_instance_pool"].([]interface{})
-	require.Len(t, mirror, 2, "mirror appears after the pool PUT fan-out")
-
-	// 5. Create a cluster referencing the provider; the export must carry
-	// the mirror instances as backends.
-	_, err = testutil.GetClient().Post("/open-api/v1/clusters", map[string]interface{}{
-		"name": clusterName,
-		"llm_config": map[string]interface{}{
-			"models":   []string{"deepseek-chat"},
-			"provider": providerName,
-		},
-	})
-	require.NoError(t, err)
-	resp, err = testutil.GetClient().Get("/inner-api/v1/configs/gslb_data/cluster_table")
-	require.NoError(t, err)
-	testutil.AssertSuccess(t, resp)
+	// 4. Create a cluster referencing the provider. WITHOUT any second pool
+	// PUT, the export must already carry the pool instances (the incident
+	// regression: previously this required a re-PUT to fill the mirror).
+	createK8sCluster(t, clusterName, providerName)
+	resp = exportClusterTable(t)
 	assertBackendExists(t, resp, clusterName, "10.0.0.1_8000")
 	assertBackendExists(t, resp, clusterName, "10.0.0.2_8000")
 
-	// 6. PUT again with one instance removed and one added: the provider
-	// mirror and the export must follow.
+	// 5. PUT again with one instance removed and one added: the export must
+	// follow at the next read.
 	resp = putInstances(t, poolName, []interface{}{
 		instanceBody("10.0.0.2", 8000, 100),
 		instanceBody("10.0.0.3", 9000, 100),
@@ -198,18 +208,14 @@ func TestK8sPool_EndToEnd(t *testing.T) {
 	testutil.AssertSuccess(t, resp)
 	testutil.AssertDataFieldEquals(t, resp, "instance_count", float64(2))
 
-	data = fetchProviderData(t, providerName)
-	mirror, _ = data["k8s_instance_pool"].([]interface{})
-	require.Len(t, mirror, 2)
-	resp, err = testutil.GetClient().Get("/inner-api/v1/configs/gslb_data/cluster_table")
-	require.NoError(t, err)
-	testutil.AssertSuccess(t, resp)
+	resp = exportClusterTable(t)
 	assertBackendNotExists(t, resp, clusterName, "10.0.0.1_8000")
 	assertBackendExists(t, resp, clusterName, "10.0.0.2_8000")
 	assertBackendExists(t, resp, clusterName, "10.0.0.3_9000")
 
-	// 7. DELETE the pool: the mirror is cleared, the export becomes an
-	// empty entry (cluster key present, no backends).
+	// 6. DELETE the referenced pool: the row is kept with zero instances, so
+	// GET returns 200 + instance_count=0 and the export becomes an empty
+	// entry (cluster key present, no backends).
 	resp, err = testutil.GetClient().Delete("/inner-api/v1/k8s_pools/" + poolName)
 	require.NoError(t, err)
 	testutil.AssertSuccess(t, resp)
@@ -217,19 +223,153 @@ func TestK8sPool_EndToEnd(t *testing.T) {
 
 	resp, err = testutil.GetClient().Get("/inner-api/v1/k8s_pools/" + poolName)
 	require.NoError(t, err)
-	testutil.AssertErrCode(t, resp, 404)
-
-	data = fetchProviderData(t, providerName)
-	mirror, _ = data["k8s_instance_pool"].([]interface{})
-	assert.Len(t, mirror, 0, "mirror cleared after pool deletion")
-
-	resp, err = testutil.GetClient().Get("/inner-api/v1/configs/gslb_data/cluster_table")
-	require.NoError(t, err)
 	testutil.AssertSuccess(t, resp)
+	testutil.AssertDataFieldEquals(t, resp, "instance_count", float64(0))
+
+	resp = exportClusterTable(t)
 	config := clusterTableConfig(t, resp)
 	_, ok := config[clusterName].(map[string]interface{})
 	require.True(t, ok, "cluster %s should still be exported as an empty entry", clusterName)
 	assert.Empty(t, subClusterBackends(t, config, clusterName))
+}
+
+// TestK8sPool_ReverseOrder covers the opposite lifecycle: provider and
+// cluster exist before any pool content; the first pool PUT makes the export
+// light up without any fan-out.
+func TestK8sPool_ReverseOrder(t *testing.T) {
+	poolName := uniquePoolName()
+	providerName := testutil.UniqueProviderName()
+	clusterName := testutil.UniqueClusterName()
+	t.Cleanup(func() {
+		testutil.DeleteCluster(clusterName)
+		testutil.DeleteProvider(providerName)
+		testutil.GetClient().Delete("/inner-api/v1/k8s_pools/" + poolName)
+	})
+
+	_, err := testutil.CreateProvider(providerName, map[string]interface{}{
+		"instance_source": "k8s_pool",
+		"k8s_pool_name":   poolName,
+		"instance_pool":   []interface{}{},
+	})
+	require.NoError(t, err)
+
+	// Cluster on a not-yet-existing pool: created successfully, exported as
+	// an empty entry.
+	createK8sCluster(t, clusterName, providerName)
+	resp := exportClusterTable(t)
+	config := clusterTableConfig(t, resp)
+	_, ok := config[clusterName].(map[string]interface{})
+	require.True(t, ok, "cluster must be exported as an empty entry before the pool exists")
+	assert.Empty(t, subClusterBackends(t, config, clusterName))
+
+	// First pool PUT: the next export carries the instances (no mirror
+	// backfill round-trip required).
+	testutil.AssertSuccess(t, putInstances(t, poolName, []interface{}{
+		instanceBody("10.0.0.1", 8000, 100),
+	}))
+	resp = exportClusterTable(t)
+	assertBackendExists(t, resp, clusterName, "10.0.0.1_8000")
+}
+
+// TestK8sPool_ClusterPatchKeepsExport pins the update path: patching a
+// cluster that references a k8s provider must not clear the exported k8s
+// instances (the derived pool is a placeholder and is never rewritten with
+// instance data).
+func TestK8sPool_ClusterPatchKeepsExport(t *testing.T) {
+	poolName := uniquePoolName()
+	providerName := testutil.UniqueProviderName()
+	clusterName := testutil.UniqueClusterName()
+	t.Cleanup(func() {
+		testutil.DeleteCluster(clusterName)
+		testutil.DeleteProvider(providerName)
+		testutil.GetClient().Delete("/inner-api/v1/k8s_pools/" + poolName)
+	})
+
+	testutil.AssertSuccess(t, putInstances(t, poolName, []interface{}{
+		instanceBody("10.0.0.1", 8000, 100),
+	}))
+	_, err := testutil.CreateProvider(providerName, map[string]interface{}{
+		"instance_source": "k8s_pool",
+		"k8s_pool_name":   poolName,
+		"instance_pool":   []interface{}{},
+	})
+	require.NoError(t, err)
+	createK8sCluster(t, clusterName, providerName)
+
+	resp := exportClusterTable(t)
+	assertBackendExists(t, resp, clusterName, "10.0.0.1_8000")
+
+	// PATCH the cluster's llm_config with the same provider: a no-op update
+	// that used to rewrite the derived pool from the dormant instance_pool.
+	resp, err = testutil.GetClient().Patch("/open-api/v1/clusters/"+clusterName, map[string]interface{}{
+		"llm_config": map[string]interface{}{
+			"models":   []string{"deepseek-chat"},
+			"provider": providerName,
+		},
+	})
+	require.NoError(t, err)
+	testutil.AssertSuccess(t, resp)
+
+	resp = exportClusterTable(t)
+	backends := subClusterBackends(t, clusterTableConfig(t, resp), clusterName)
+	require.NotEmpty(t, backends, "cluster PATCH must not clear the k8s export")
+	assert.Equal(t, "10.0.0.1_8000", backends[0]["Name"])
+}
+
+// TestK8sPool_ProviderModeSwitch covers instance_pool <-> k8s_pool switches:
+// the export must follow the effective source in both directions.
+func TestK8sPool_ProviderModeSwitch(t *testing.T) {
+	poolName := uniquePoolName()
+	providerName := testutil.UniqueProviderName()
+	clusterName := testutil.UniqueClusterName()
+	t.Cleanup(func() {
+		testutil.DeleteCluster(clusterName)
+		testutil.DeleteProvider(providerName)
+		testutil.GetClient().Delete("/inner-api/v1/k8s_pools/" + poolName)
+	})
+
+	// Start as a manual provider with a manual instance.
+	_, err := testutil.CreateProvider(providerName, map[string]interface{}{
+		"instance_pool": []interface{}{instanceBody("1.2.3.4", 443, 100)},
+	})
+	require.NoError(t, err)
+	createK8sCluster(t, clusterName, providerName)
+
+	resp := exportClusterTable(t)
+	assertBackendExists(t, resp, clusterName, "1.2.3.4_443")
+
+	// Switch to k8s_pool mode: the manual backend disappears (derived pool
+	// cleared to the empty placeholder) and the export follows the pool.
+	resp, err = testutil.GetClient().Patch("/open-api/v1/providers/"+providerName, map[string]interface{}{
+		"instance_source": "k8s_pool",
+		"k8s_pool_name":   poolName,
+		"model_protocols": []string{"openai"},
+	})
+	require.NoError(t, err)
+	testutil.AssertSuccess(t, resp)
+
+	resp = exportClusterTable(t)
+	config := clusterTableConfig(t, resp)
+	assert.Empty(t, subClusterBackends(t, config, clusterName), "manual backend must be cleared on manual -> k8s switch")
+
+	testutil.AssertSuccess(t, putInstances(t, poolName, []interface{}{
+		instanceBody("10.0.0.1", 8000, 100),
+	}))
+	resp = exportClusterTable(t)
+	assertBackendExists(t, resp, clusterName, "10.0.0.1_8000")
+
+	// Switch back to instance_pool mode: the dormant manual pool takes over.
+	resp, err = testutil.GetClient().Patch("/open-api/v1/providers/"+providerName, map[string]interface{}{
+		"instance_source": "instance_pool",
+		"instance_pool":   []interface{}{instanceBody("1.2.3.4", 443, 100)},
+		"model_protocols": []string{"openai"},
+	})
+	require.NoError(t, err)
+	testutil.AssertSuccess(t, resp)
+
+	resp = exportClusterTable(t)
+	assertBackendExists(t, resp, clusterName, "1.2.3.4_443")
+	assertBackendNotExists(t, resp, clusterName, "10.0.0.1_8000")
 }
 
 func TestK8sPool_List(t *testing.T) {
@@ -316,10 +456,10 @@ func TestK8sPool_ValidationErrors(t *testing.T) {
 }
 
 // TestProvider_K8sPoolModeUpdate covers the OpenAPI side of the contract:
-// creating and PATCHing providers in k8s_pool mode, the read-only mirror
-// rejection, and the legacy default-mode behavior.
+// creating and PATCHing providers in k8s_pool mode, the removed
+// k8s_instance_pool field silent-ignore, and the legacy default-mode behavior.
 func TestProvider_K8sPoolModeUpdate(t *testing.T) {
-	t.Run("create rejects k8s_instance_pool as read-only", func(t *testing.T) {
+	t.Run("create silently ignores the removed k8s_instance_pool field", func(t *testing.T) {
 		providerName := testutil.UniqueProviderName()
 		t.Cleanup(func() { testutil.DeleteProvider(providerName) })
 		resp, err := testutil.GetClient().Post("/open-api/v1/providers", map[string]interface{}{
@@ -331,7 +471,8 @@ func TestProvider_K8sPoolModeUpdate(t *testing.T) {
 			"k8s_instance_pool": []interface{}{instanceBody("10.0.0.1", 8000, 100)},
 		})
 		require.NoError(t, err)
-		testutil.AssertErrCode(t, resp, 422)
+		testutil.AssertSuccess(t, resp)
+		assertProviderHasNoMirror(t, providerName)
 	})
 
 	t.Run("create rejects invalid instance_source", func(t *testing.T) {
@@ -379,7 +520,7 @@ func TestProvider_K8sPoolModeUpdate(t *testing.T) {
 		})
 		require.NoError(t, err)
 		testutil.AssertSuccess(t, resp)
-		data := fetchProviderData(t, providerName)
+		data := assertProviderHasNoMirror(t, providerName)
 		assert.Equal(t, "instance_pool", data["instance_source"])
 		// The k8s pool name is kept dormant for a later switch back.
 		assert.Equal(t, poolName, data["k8s_pool_name"])
@@ -407,20 +548,80 @@ func TestProvider_K8sPoolModeUpdate(t *testing.T) {
 	})
 }
 
-// TestK8sPool_DeleteReferenced ensures the no-reference-protection contract:
-// a referenced pool can be deleted and referencing providers are reset.
+// TestK8sPool_DeleteUnreferenced ensures an unreferenced pool is fully
+// removed (404 afterwards).
+func TestK8sPool_DeleteUnreferenced(t *testing.T) {
+	poolName := uniquePoolName()
+	t.Cleanup(func() {
+		testutil.GetClient().Delete("/inner-api/v1/k8s_pools/" + poolName)
+	})
+
+	testutil.AssertSuccess(t, putInstances(t, poolName, []interface{}{
+		instanceBody("10.0.0.1", 8000, 100),
+	}))
+
+	resp, err := testutil.GetClient().Delete("/inner-api/v1/k8s_pools/" + poolName)
+	require.NoError(t, err)
+	testutil.AssertSuccess(t, resp)
+
+	resp, err = testutil.GetClient().Get("/inner-api/v1/k8s_pools/" + poolName)
+	require.NoError(t, err)
+	testutil.AssertErrCode(t, resp, 404)
+}
+
+// TestK8sPool_DeleteReferenced ensures the reference-aware contract: a
+// referenced pool is kept with zero instances (GET 200 + instance_count=0)
+// and the export drains to an empty entry.
 func TestK8sPool_DeleteReferenced(t *testing.T) {
 	poolName := uniquePoolName()
 	providerName := testutil.UniqueProviderName()
+	clusterName := testutil.UniqueClusterName()
 	t.Cleanup(func() {
+		testutil.DeleteCluster(clusterName)
 		testutil.DeleteProvider(providerName)
 		testutil.GetClient().Delete("/inner-api/v1/k8s_pools/" + poolName)
 	})
 
-	resp := putInstances(t, poolName, []interface{}{
+	testutil.AssertSuccess(t, putInstances(t, poolName, []interface{}{
 		instanceBody("10.0.0.1", 8000, 100),
+	}))
+	_, err := testutil.CreateProvider(providerName, map[string]interface{}{
+		"instance_source": "k8s_pool",
+		"k8s_pool_name":   poolName,
+		"instance_pool":   []interface{}{},
 	})
+	require.NoError(t, err)
+	createK8sCluster(t, clusterName, providerName)
+
+	resp, err := testutil.GetClient().Delete("/inner-api/v1/k8s_pools/" + poolName)
+	require.NoError(t, err)
 	testutil.AssertSuccess(t, resp)
+
+	// The row is kept: 200 + zero instances, last_sync_time preserved.
+	resp, err = testutil.GetClient().Get("/inner-api/v1/k8s_pools/" + poolName)
+	require.NoError(t, err)
+	testutil.AssertSuccess(t, resp)
+	testutil.AssertDataFieldEquals(t, resp, "instance_count", float64(0))
+	testutil.AssertDataFieldNotEmpty(t, resp, "last_sync_time")
+
+	resp = exportClusterTable(t)
+	config := clusterTableConfig(t, resp)
+	_, ok := config[clusterName].(map[string]interface{})
+	require.True(t, ok, "cluster must be exported as an empty entry after referenced pool delete")
+	assert.Empty(t, subClusterBackends(t, config, clusterName))
+}
+
+// TestK8sPool_ProviderReferencesMissingPool pins the zero-instance contract:
+// a provider referencing a pool that does not exist exports an empty entry
+// without any error.
+func TestK8sPool_ProviderReferencesMissingPool(t *testing.T) {
+	poolName := uniquePoolName()
+	providerName := testutil.UniqueProviderName()
+	clusterName := testutil.UniqueClusterName()
+	t.Cleanup(func() {
+		testutil.DeleteCluster(clusterName)
+		testutil.DeleteProvider(providerName)
+	})
 
 	_, err := testutil.CreateProvider(providerName, map[string]interface{}{
 		"instance_source": "k8s_pool",
@@ -428,184 +629,58 @@ func TestK8sPool_DeleteReferenced(t *testing.T) {
 		"instance_pool":   []interface{}{},
 	})
 	require.NoError(t, err)
+	createK8sCluster(t, clusterName, providerName)
 
-	resp = putInstances(t, poolName, []interface{}{
-		instanceBody("10.0.0.1", 8000, 100),
-	})
-	testutil.AssertSuccess(t, resp)
-
-	resp, err = testutil.GetClient().Delete("/inner-api/v1/k8s_pools/" + poolName)
-	require.NoError(t, err)
-	testutil.AssertSuccess(t, resp)
-
-	data := fetchProviderData(t, providerName)
-	mirror, _ := data["k8s_instance_pool"].([]interface{})
-	assert.Len(t, mirror, 0, "referenced provider mirror cleared after pool deletion")
+	resp := exportClusterTable(t)
+	config := clusterTableConfig(t, resp)
+	_, ok := config[clusterName].(map[string]interface{})
+	require.True(t, ok, "cluster must be exported as an empty entry when the pool is missing")
+	assert.Empty(t, subClusterBackends(t, config, clusterName))
 }
 
-// TestK8sPool_ProviderMirrorLinkage covers the /k8s_pools <-> /providers
-// linkage beyond the single-provider happy path: N:1 fan-out with isolation,
-// PUT-empty clear semantics, and mode-switch detachment.
-func TestK8sPool_ProviderMirrorLinkage(t *testing.T) {
-	mirrorOf := func(t *testing.T, providerName string) []interface{} {
+// TestK8sPool_VersionBump pins the export freshness contract: changing the
+// pool content must bump the exported cluster_table version.
+func TestK8sPool_VersionBump(t *testing.T) {
+	poolName := uniquePoolName()
+	providerName := testutil.UniqueProviderName()
+	clusterName := testutil.UniqueClusterName()
+	t.Cleanup(func() {
+		testutil.DeleteCluster(clusterName)
+		testutil.DeleteProvider(providerName)
+		testutil.GetClient().Delete("/inner-api/v1/k8s_pools/" + poolName)
+	})
+
+	_, err := testutil.CreateProvider(providerName, map[string]interface{}{
+		"instance_source": "k8s_pool",
+		"k8s_pool_name":   poolName,
+		"instance_pool":   []interface{}{},
+	})
+	require.NoError(t, err)
+	createK8sCluster(t, clusterName, providerName)
+
+	exportVersion := func(t *testing.T) string {
 		t.Helper()
-		data := fetchProviderData(t, providerName)
-		mirror, _ := data["k8s_instance_pool"].([]interface{})
-		return mirror
+		resp, err := testutil.GetClient().Get("/inner-api/v1/configs/gslb_data/cluster_table?version=")
+		require.NoError(t, err)
+		testutil.AssertSuccess(t, resp)
+		var data map[string]interface{}
+		require.NoError(t, json.Unmarshal(resp.Data, &data))
+		version, ok := data["Version"].(string)
+		require.True(t, ok, "cluster_table response should carry a version")
+		return version
 	}
 
-	t.Run("N:1 fan-out updates every referencing provider and only those", func(t *testing.T) {
-		poolA := uniquePoolName()
-		poolB := uniquePoolName()
-		provA1 := testutil.UniqueProviderName()
-		provA2 := testutil.UniqueProviderName()
-		provB := testutil.UniqueProviderName()
-		t.Cleanup(func() {
-			testutil.DeleteProvider(provA1)
-			testutil.DeleteProvider(provA2)
-			testutil.DeleteProvider(provB)
-			testutil.GetClient().Delete("/inner-api/v1/k8s_pools/" + poolA)
-			testutil.GetClient().Delete("/inner-api/v1/k8s_pools/" + poolB)
-		})
-
-		createK8sProvider := func(name, pool string) {
-			_, err := testutil.CreateProvider(name, map[string]interface{}{
-				"instance_source": "k8s_pool",
-				"k8s_pool_name":   pool,
-				"instance_pool":   []interface{}{},
-			})
-			require.NoError(t, err)
-		}
-		createK8sProvider(provA1, poolA)
-		createK8sProvider(provA2, poolA)
-		createK8sProvider(provB, poolB)
-
-		// PUT pool A: both referencing providers get the mirror, provider of
-		// pool B stays empty.
-		testutil.AssertSuccess(t, putInstances(t, poolA, []interface{}{
-			instanceBody("10.0.0.1", 8000, 100),
-			instanceBody("10.0.0.2", 8000, nil),
-		}))
-		mirror := mirrorOf(t, provA1)
-		require.Len(t, mirror, 2)
-		first := mirror[0].(map[string]interface{})
-		assert.Equal(t, "10.0.0.1", first["addr"])
-		assert.Equal(t, float64(8000), first["port"])
-		assert.Equal(t, float64(100), first["weight"])
-		assert.Len(t, mirrorOf(t, provA2), 2)
-		assert.Len(t, mirrorOf(t, provB), 0)
-
-		// PUT pool B: only provider B follows.
-		testutil.AssertSuccess(t, putInstances(t, poolB, []interface{}{
-			instanceBody("10.0.1.1", 9000, 100),
-		}))
-		assert.Len(t, mirrorOf(t, provB), 1)
-		assert.Len(t, mirrorOf(t, provA1), 2, "providers of pool A unaffected by pool B PUT")
-
-		// DELETE pool A: both mirrors cleared, provider B untouched.
-		resp, err := testutil.GetClient().Delete("/inner-api/v1/k8s_pools/" + poolA)
-		require.NoError(t, err)
-		testutil.AssertSuccess(t, resp)
-		assert.Len(t, mirrorOf(t, provA1), 0)
-		assert.Len(t, mirrorOf(t, provA2), 0)
-		assert.Len(t, mirrorOf(t, provB), 1, "provider of pool B unaffected by pool A DELETE")
-	})
-
-	t.Run("PUT empty list clears mirrors without deleting the pool", func(t *testing.T) {
-		poolName := uniquePoolName()
-		providerName := testutil.UniqueProviderName()
-		t.Cleanup(func() {
-			testutil.DeleteProvider(providerName)
-			testutil.GetClient().Delete("/inner-api/v1/k8s_pools/" + poolName)
-		})
-
-		_, err := testutil.CreateProvider(providerName, map[string]interface{}{
-			"instance_source": "k8s_pool",
-			"k8s_pool_name":   poolName,
-			"instance_pool":   []interface{}{},
-		})
-		require.NoError(t, err)
-
-		testutil.AssertSuccess(t, putInstances(t, poolName, []interface{}{
-			instanceBody("10.0.0.1", 8000, 100),
-		}))
-		require.Len(t, mirrorOf(t, providerName), 1)
-
-		// Zero instances via PUT (pool entry still exists).
-		testutil.AssertSuccess(t, putInstances(t, poolName, []interface{}{}))
-		assert.Len(t, mirrorOf(t, providerName), 0, "mirror cleared by PUT empty list")
-
-		resp, err := testutil.GetClient().Get("/inner-api/v1/k8s_pools/" + poolName)
-		require.NoError(t, err)
-		testutil.AssertSuccess(t, resp)
-		testutil.AssertDataFieldEquals(t, resp, "instance_count", float64(0))
-	})
-
-	t.Run("mode switch detaches and re-attaches the linkage", func(t *testing.T) {
-		poolName := uniquePoolName()
-		providerName := testutil.UniqueProviderName()
-		t.Cleanup(func() {
-			testutil.DeleteProvider(providerName)
-			testutil.GetClient().Delete("/inner-api/v1/k8s_pools/" + poolName)
-		})
-
-		_, err := testutil.CreateProvider(providerName, map[string]interface{}{
-			"instance_source": "k8s_pool",
-			"k8s_pool_name":   poolName,
-			"instance_pool":   []interface{}{},
-		})
-		require.NoError(t, err)
-
-		testutil.AssertSuccess(t, putInstances(t, poolName, []interface{}{
-			instanceBody("10.0.0.1", 8000, 100),
-		}))
-		require.Len(t, mirrorOf(t, providerName), 1)
-
-		// Switch to instance_pool mode: the mirror is cleared per contract
-		// and subsequent pool PUTs no longer reach this provider.
-		resp, err := testutil.GetClient().Patch("/open-api/v1/providers/"+providerName, map[string]interface{}{
-			"instance_source": "instance_pool",
-			"instance_pool":   []interface{}{instanceBody("1.2.3.4", 443, 100)},
-			"model_protocols": []string{"openai"},
-		})
-		require.NoError(t, err)
-		testutil.AssertSuccess(t, resp)
-		assert.Len(t, mirrorOf(t, providerName), 0, "mirror cleared on mode switch")
-
-		testutil.AssertSuccess(t, putInstances(t, poolName, []interface{}{
-			instanceBody("10.0.0.9", 8000, 100),
-		}))
-		assert.Len(t, mirrorOf(t, providerName), 0, "detached provider ignores pool PUTs")
-		data := fetchProviderData(t, providerName)
-		assert.Equal(t, "instance_pool", data["instance_source"])
-		assert.Equal(t, poolName, data["k8s_pool_name"], "pool name stays dormant for switch back")
-		pool, _ := data["instance_pool"].([]interface{})
-		require.Len(t, pool, 1)
-		assert.Equal(t, "1.2.3.4", pool[0].(map[string]interface{})["addr"])
-
-		// Switch back to k8s_pool mode: the linkage re-attaches after the
-		// next pool PUT fan-out.
-		resp, err = testutil.GetClient().Patch("/open-api/v1/providers/"+providerName, map[string]interface{}{
-			"instance_source": "k8s_pool",
-			"k8s_pool_name":   poolName,
-			"model_protocols": []string{"openai"},
-		})
-		require.NoError(t, err)
-		testutil.AssertSuccess(t, resp)
-
-		testutil.AssertSuccess(t, putInstances(t, poolName, []interface{}{
-			instanceBody("10.0.0.9", 8000, 100),
-			instanceBody("10.0.0.10", 8000, nil),
-		}))
-		mirror := mirrorOf(t, providerName)
-		require.Len(t, mirror, 2, "mirror follows again after re-attach")
-		assert.Equal(t, "10.0.0.10", mirror[1].(map[string]interface{})["addr"])
-	})
+	before := exportVersion(t)
+	testutil.AssertSuccess(t, putInstances(t, poolName, []interface{}{
+		instanceBody("10.0.0.1", 8000, 100),
+	}))
+	after := exportVersion(t)
+	assert.NotEqual(t, before, after, "pool PUT must bump the cluster_table version via the export signature")
 }
 
 // TestK8sPool_RejectedWritesLeaveStateUnchanged pins the read-back-zero-change
-// contract (skill: 4xx 拒绝路径必须回读): every rejected write here must leave
-// the provider, the pool, and the exported cluster_table bit-identical.
+// contract: every rejected write here must leave the provider, the pool, and
+// the exported cluster_table bit-identical.
 func TestK8sPool_RejectedWritesLeaveStateUnchanged(t *testing.T) {
 	t.Run("PATCH invalid k8s_pool_name → 422 → provider unchanged", func(t *testing.T) {
 		providerName := testutil.UniqueProviderName()
@@ -632,8 +707,9 @@ func TestK8sPool_RejectedWritesLeaveStateUnchanged(t *testing.T) {
 			"rejected PATCH must not persist the submitted instance_pool")
 	})
 
-	t.Run("create with read-only k8s_instance_pool → 422 → provider not created", func(t *testing.T) {
+	t.Run("create with removed k8s_instance_pool → silently ignored → provider created without mirror", func(t *testing.T) {
 		providerName := testutil.UniqueProviderName()
+		t.Cleanup(func() { testutil.DeleteProvider(providerName) })
 		resp, err := testutil.GetClient().Post("/open-api/v1/providers", map[string]interface{}{
 			"name":              providerName,
 			"models":            []string{"deepseek-chat"},
@@ -644,11 +720,8 @@ func TestK8sPool_RejectedWritesLeaveStateUnchanged(t *testing.T) {
 			"k8s_instance_pool": []interface{}{instanceBody("10.0.0.1", 8000, 100)},
 		})
 		require.NoError(t, err)
-		testutil.AssertErrCode(t, resp, 422)
-
-		resp, err = testutil.GetClient().Get("/open-api/v1/providers/" + providerName)
-		require.NoError(t, err)
-		testutil.AssertErrCode(t, resp, 404)
+		testutil.AssertSuccess(t, resp)
+		assertProviderHasNoMirror(t, providerName)
 	})
 
 	t.Run("PATCH switch to k8s_pool without name → 422 → provider unchanged", func(t *testing.T) {
@@ -666,12 +739,11 @@ func TestK8sPool_RejectedWritesLeaveStateUnchanged(t *testing.T) {
 		require.NoError(t, err)
 		testutil.AssertErrCode(t, resp, 422)
 
-		data := fetchProviderData(t, providerName)
+		data := assertProviderHasNoMirror(t, providerName)
 		assert.Equal(t, "instance_pool", data["instance_source"], "rejected mode switch must not change stored source")
-		assert.Empty(t, data["k8s_instance_pool"])
 	})
 
-	t.Run("failed pool PUT leaves pool, mirror and export unchanged", func(t *testing.T) {
+	t.Run("failed pool PUT leaves pool and export unchanged", func(t *testing.T) {
 		poolName := uniquePoolName()
 		providerName := testutil.UniqueProviderName()
 		clusterName := testutil.UniqueClusterName()
@@ -690,17 +762,7 @@ func TestK8sPool_RejectedWritesLeaveStateUnchanged(t *testing.T) {
 			"instance_pool":   []interface{}{},
 		})
 		require.NoError(t, err)
-		testutil.AssertSuccess(t, putInstances(t, poolName, []interface{}{
-			instanceBody("10.0.0.1", 8000, 100),
-		}))
-		_, err = testutil.GetClient().Post("/open-api/v1/clusters", map[string]interface{}{
-			"name": clusterName,
-			"llm_config": map[string]interface{}{
-				"models":   []string{"deepseek-chat"},
-				"provider": providerName,
-			},
-		})
-		require.NoError(t, err)
+		createK8sCluster(t, clusterName, providerName)
 
 		// Rejected PUT: duplicate addr/port inside the new list.
 		resp := putInstances(t, poolName, []interface{}{
@@ -713,22 +775,15 @@ func TestK8sPool_RejectedWritesLeaveStateUnchanged(t *testing.T) {
 		assert.Equal(t, float64(1), entry["instance_count"], "rejected PUT must not touch the pool")
 		assert.Equal(t, "10.0.0.1", entry["instances"].([]interface{})[0].(map[string]interface{})["addr"])
 
-		data := fetchProviderData(t, providerName)
-		mirror, _ := data["k8s_instance_pool"].([]interface{})
-		require.Len(t, mirror, 1, "rejected PUT must not touch the mirror")
-		assert.Equal(t, "10.0.0.1", mirror[0].(map[string]interface{})["addr"])
-
 		// 防泄漏: the rejected instances must not reach the exported config.
-		resp, err = testutil.GetClient().Get("/inner-api/v1/configs/gslb_data/cluster_table")
-		require.NoError(t, err)
-		testutil.AssertSuccess(t, resp)
+		resp = exportClusterTable(t)
 		assertBackendExists(t, resp, clusterName, "10.0.0.1_8000")
 		assertBackendNotExists(t, resp, clusterName, "10.9.9.9_9000")
 	})
 }
 
-// TestProvider_K8sPoolOmissionMatrix pins the omission semantics (skill: PATCH
-// 省略字段保留原值矩阵) for the three new fields.
+// TestProvider_K8sPoolOmissionMatrix pins the omission semantics (PATCH 省略
+// 字段保留原值矩阵) for the instance-source fields.
 func TestProvider_K8sPoolOmissionMatrix(t *testing.T) {
 	t.Run("k8s mode PATCH keeps every unsubmitted field", func(t *testing.T) {
 		poolName := uniquePoolName()
@@ -755,7 +810,7 @@ func TestProvider_K8sPoolOmissionMatrix(t *testing.T) {
 		require.NoError(t, err)
 		testutil.AssertSuccess(t, resp)
 
-		data := fetchProviderData(t, providerName)
+		data := assertProviderHasNoMirror(t, providerName)
 		assert.Equal(t, "new-desc", data["description"])
 		assert.Equal(t, []interface{}{"deepseek-chat"}, data["models"])
 		assert.Len(t, data["keys"], 2)
@@ -764,7 +819,6 @@ func TestProvider_K8sPoolOmissionMatrix(t *testing.T) {
 		assert.Equal(t, "1.2.3.4", pool[0].(map[string]interface{})["addr"],
 			"dormant instance_pool must survive a PATCH that omits it")
 		assert.Equal(t, poolName, data["k8s_pool_name"])
-		assert.Empty(t, data["k8s_instance_pool"])
 	})
 
 	t.Run("explicit empty pool rejected at switch, dormant pool recovers when resubmitted", func(t *testing.T) {
@@ -773,8 +827,8 @@ func TestProvider_K8sPoolOmissionMatrix(t *testing.T) {
 			testutil.GetClient().Delete("/inner-api/v1/k8s_pools/" + poolName)
 		})
 
-		// KP-7-006a: switching to instance_pool with an explicit empty pool is
-		// rejected at the switch point and the dormant pool stays intact.
+		// Switching to instance_pool with an explicit empty pool is rejected
+		// at the switch point and the dormant pool stays intact.
 		p1 := testutil.UniqueProviderName()
 		t.Cleanup(func() { testutil.DeleteProvider(p1) })
 		_, err := testutil.CreateProvider(p1, map[string]interface{}{
@@ -792,14 +846,14 @@ func TestProvider_K8sPoolOmissionMatrix(t *testing.T) {
 		require.NoError(t, err)
 		testutil.AssertErrCode(t, resp, 422)
 
-		data := fetchProviderData(t, p1)
+		data := assertProviderHasNoMirror(t, p1)
 		assert.Equal(t, "k8s_pool", data["instance_source"], "rejected switch must keep the stored mode")
 		pool, _ := data["instance_pool"].([]interface{})
 		require.Len(t, pool, 1, "dormant pool must stay intact after a rejected switch")
 		assert.Equal(t, "1.2.3.4", pool[0].(map[string]interface{})["addr"])
 
-		// KP-7-006b: resubmitting the dormant pool value at switch time makes
-		// it effective again, while k8s_pool_name stays dormant.
+		// Resubmitting the dormant pool value at switch time makes it
+		// effective again, while k8s_pool_name stays dormant.
 		p2 := testutil.UniqueProviderName()
 		t.Cleanup(func() { testutil.DeleteProvider(p2) })
 		_, err = testutil.CreateProvider(p2, map[string]interface{}{
@@ -817,20 +871,18 @@ func TestProvider_K8sPoolOmissionMatrix(t *testing.T) {
 		require.NoError(t, err)
 		testutil.AssertSuccess(t, resp)
 
-		data = fetchProviderData(t, p2)
+		data = assertProviderHasNoMirror(t, p2)
 		assert.Equal(t, "instance_pool", data["instance_source"])
 		assert.Equal(t, poolName, data["k8s_pool_name"], "pool name stays dormant for a later switch back")
 		pool, _ = data["instance_pool"].([]interface{})
 		require.Len(t, pool, 1)
 		assert.Equal(t, "1.2.3.4", pool[0].(map[string]interface{})["addr"])
-		assert.Empty(t, data["k8s_instance_pool"])
 	})
 }
 
-// TestProvider_K8sPoolModeSwitchAuditLog pins the audit contract (skill:
-// 更新用例必须断言审计日志): a mode-switch PATCH must produce a provider
-// update log whose diff_keys exactly matches the fields that actually changed
-// — ElementsMatch, not Contains (skill anti-pattern #4).
+// TestProvider_K8sPoolModeSwitchAuditLog pins the audit contract: a
+// mode-switch PATCH must produce a provider update log whose diff_keys
+// exactly matches the fields that actually changed.
 func TestProvider_K8sPoolModeSwitchAuditLog(t *testing.T) {
 	poolName := uniquePoolName()
 	providerName := testutil.UniqueProviderName()

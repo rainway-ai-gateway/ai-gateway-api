@@ -33,14 +33,15 @@ import (
 // 出网拼地址取 key）、priceQuerier（mode=batch 批量价）、httpClientFactory
 // （出网 client，便于 mock）、clock。进程内不保留批量任务状态。
 type Manager struct {
-	storager            BatchStorager
-	redis               RedisClient
-	apiKeyQuerier       APIKeyQuerier
-	providerQuerier     ProviderQuerier
-	priceQuerier        BatchPriceQuerier
-	httpClientFactory   func() *http.Client
-	clock               quota.Clock
-	operationLogManager ioperlog.OperationLogRecorder
+	storager             BatchStorager
+	redis                RedisClient
+	apiKeyQuerier        APIKeyQuerier
+	providerQuerier      ProviderQuerier
+	priceQuerier         BatchPriceQuerier
+	httpClientFactory    func() *http.Client
+	clock                quota.Clock
+	operationLogManager  ioperlog.OperationLogRecorder
+	instancePoolResolver *iprovider.InstancePoolResolver
 
 	providerTimeout    time.Duration
 	settleGrace        time.Duration
@@ -154,6 +155,12 @@ func NewManager(storager BatchStorager, redis RedisClient, apiKeyQuerier APIKeyQ
 // SetOperationLogManager 注入审计记录器（cancel 写 operation_logs）。
 func (m *Manager) SetOperationLogManager(manager ioperlog.OperationLogRecorder) {
 	m.operationLogManager = manager
+}
+
+// SetInstancePoolResolver 注入有效池解析器（k8s_pool 模式出网时按
+// k8s_pool_name 实时解析实例）。
+func (m *Manager) SetInstancePoolResolver(resolver *iprovider.InstancePoolResolver) {
+	m.instancePoolResolver = resolver
 }
 
 // BatchManager 是 endpoints 层面向的批量任务管控接口（*Manager 满足）。

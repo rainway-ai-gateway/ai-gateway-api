@@ -133,10 +133,12 @@ func testServerDataConfSchema(t *testing.T) {
 		"llm_config": map[string]interface{}{
 			"models": []string{"deepseek-chat"},
 			"key_affinity": map[string]interface{}{
-				"enabled":        true,
-				"ttl":            600,
-				"redis_prefix":   "bfe:ai:key_affinity",
-				"penalty_enable": true,
+				"enabled":          true,
+				"ttl":              600,
+				"redis_prefix":     "bfe:ai:key_affinity",
+				"penalty_enable":   true,
+				"penalty_ttl_429":  30,
+				"penalty_ttl_auth": 120,
 			},
 			"provider": affinityProviderName,
 		},
@@ -192,6 +194,8 @@ func assertServerDataConfKeyAffinity(t *testing.T, data []byte, clusterName stri
 	assert.Equal(t, float64(600), keyPolicy["SessionAffinityTTL"])
 	assert.Equal(t, "bfe:ai:key_affinity", keyPolicy["SessionAffinityRedisPrefix"])
 	assert.Equal(t, true, keyPolicy["SessionAffinityPenaltyEnable"])
+	assert.Equal(t, float64(30), keyPolicy["SessionAffinityPenaltyTTL429"])
+	assert.Equal(t, float64(120), keyPolicy["SessionAffinityPenaltyTTLAuth"])
 }
 
 // assertServerDataConfModelProtocols 校验导出结果中指定 cluster 的 AIConf.ModelProtocols。

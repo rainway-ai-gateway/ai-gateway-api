@@ -107,7 +107,7 @@ AI 缓存规则集合（配合 BFE `mod_ai_cache` 模块：一期 Redis 精确�
 
 1. 校验参数合法性：逐条校验字段（name 格式、cond 编译、cache_key_strategy 枚举、cache_ttl/max_body_bytes/max_value_bytes 取值范围；`enable_semantic_cache` 为 bool，无额外组合校验——`disabled` 策略上的开关由 BFE 忽略）
 2. 校验 `rules` 中规则 `name` 与 `cond` 是否重复（均集合内唯一，逐字节比较）
-3. 单事务内整体替换规则集合（先删除全部旧规则，再按数组顺序写入；新 `id` 自增序即优先级序）；任一校验失败或事务失败则整体回滚，集合保持原状
+3. 单事务内整体替换规则集合（先删除全部旧规则，再按数组顺序写入；新 `id` 自增序即优先级序）；任一校验失败或事务失败则整体回滚，集合保持原状；整体替换对同一集合串行执行（跨 api 副本），遇并发替换或瞬态锁冲突时在有限重试后返回 `409 Conflict`（issue #295）
 4. 记录操作日志（`resource_type=ai_cache_rule`，`before`/`after` 为整个规则集合快照）
 5. 返回结果
 
@@ -149,6 +149,11 @@ AI 缓存规则集合（配合 BFE `mod_ai_cache` 模块：一期 Redis 精确�
 - 不在提交列表中的规则即删除；`{"rules": []}` 表示清空全部规则（BFE 侧无规则命中，天然放行）。
 - 本接口为整组规则的唯一写入口，配置生效时延 = conf-agent 轮询周期（`ReloadIntervalMs`）+ BFE 热加载时间。
 - 校验失败（4xx）同样记录一条失败操作日志（`resource_type=ai_cache_rule`、身份固定为集合、before 快照取自库中现状而非请求体）。
+- 并发整体替换：同一集合的 PUT 串行执行（MySQL 命名锁；SQLite 由单写者天然串行）。若 10s 内未取得执行权，或瞬态锁冲突（MySQL 1213/1205）重试 3 次仍失败，返回 `409 Conflict`（可重试，集合保持原状，`ErrMsg` 不含数据库错误原文）：
+
+  ```json
+  {"ErrNum": 409, "ErrMsg": "Conflict: collection is being replaced concurrently, retry later"}
+  ```
 
 ---
 

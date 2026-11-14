@@ -118,10 +118,12 @@ var (
 	ProviderStoragerSingleton iprovider.ProviderStorager
 	ProviderManager           *iprovider.ProviderManager
 
-	// K8s instance pools (instance_source=k8s_pool mirror maintenance,
-	// k8s-pools.md)
-	K8sPoolStorager ik8s_pool.K8sPoolStorager
-	K8sPoolManager  *ik8s_pool.K8sPoolManager
+	// K8s instance pools (k8s_pools is the single source of truth for
+	// k8s-sourced instances; consumers resolve them at read time through
+	// InstancePoolResolver, k8s-pools.md)
+	K8sPoolStorager      ik8s_pool.K8sPoolStorager
+	K8sPoolManager       *ik8s_pool.K8sPoolManager
+	InstancePoolResolver *iprovider.InstancePoolResolver
 
 	EntityTypeManager      *entity.EntityTypeManager
 	EntityManager          *entity.EntityManager

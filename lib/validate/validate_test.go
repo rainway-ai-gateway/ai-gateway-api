@@ -1,12 +1,12 @@
 package validate
 
 import (
+	"math"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/rainway-ai-gateway/ai-gateway-api/lib"
-	"github.com/rainway-ai-gateway/ai-gateway-api/model/icluster_conf"
 	"github.com/rainway-ai-gateway/ai-gateway-api/model/shared"
 	"github.com/stretchr/testify/assert"
 )
@@ -100,6 +100,26 @@ func TestTokenName(t *testing.T) {
 	assert.NoError(t, TokenName("token_1"))
 	assert.Error(t, TokenName("default"))
 	assert.Error(t, TokenName("-token"))
+}
+
+func TestTokenNameRef(t *testing.T) {
+	// Reserved names are valid references: built-in tokens must stay
+	// operable through by-name query/delete endpoints (issue #308).
+	assert.NoError(t, TokenNameRef("admin"))
+	assert.NoError(t, TokenNameRef("system"))
+	assert.NoError(t, TokenNameRef("default"))
+	assert.NoError(t, TokenNameRef("token_1"))
+	// Trailing/leading whitespace and out-of-charset characters are
+	// rejected: the storage comparison is PAD SPACE insensitive, so an
+	// unchecked name like "t " would match the real token "t".
+	assert.Error(t, TokenNameRef("t "))
+	assert.Error(t, TokenNameRef(" t"))
+	assert.Error(t, TokenNameRef("token name"))
+	assert.Error(t, TokenNameRef("token+1"))
+	assert.Error(t, TokenNameRef("-token"))
+	assert.Error(t, TokenNameRef("token."))
+	assert.Error(t, TokenNameRef(""))
+	assert.Error(t, TokenNameRef(strings.Repeat("a", MaxTokenNameLength+1)))
 }
 
 func TestClusterName(t *testing.T) {
@@ -211,6 +231,32 @@ func TestDescription(t *testing.T) {
 	})
 }
 
+func TestDescriptionRange(t *testing.T) {
+	// certificates.md §1/§2.1: description 必填、长度 2-256 字节（按 UTF-8
+	// 字节计）。下限与上限都按字节计（issue #310）：单个汉字 1 字符/3 字节
+	// 是合法的，单个 ASCII 字符 1 字节不满足下限。
+	t.Run("byte boundaries 2/256", func(t *testing.T) {
+		assert.Error(t, DescriptionRange("a", 2, MaxCertificateDescriptionLength, "description"))
+		assert.NoError(t, DescriptionRange("ab", 2, MaxCertificateDescriptionLength, "description"))
+		assert.NoError(t, DescriptionRange(strings.Repeat("a", 256), 2, MaxCertificateDescriptionLength, "description"))
+		assert.Error(t, DescriptionRange(strings.Repeat("a", 257), 2, MaxCertificateDescriptionLength, "description"))
+	})
+
+	t.Run("single multibyte character passes the lower bound", func(t *testing.T) {
+		assert.NoError(t, DescriptionRange("汉", 2, MaxCertificateDescriptionLength, "description"))
+	})
+
+	t.Run("control characters are rejected within range", func(t *testing.T) {
+		assert.Error(t, DescriptionRange("ab\x01cd", 2, MaxCertificateDescriptionLength, "description"))
+	})
+
+	t.Run("error message names the unit and the bounds", func(t *testing.T) {
+		err := DescriptionRange("a", 2, MaxCertificateDescriptionLength, "description")
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "between 2 and 256 bytes")
+	})
+}
+
 func TestAPIKeyValue(t *testing.T) {
 	assert.NoError(t, APIKeyValue("ak-123_test"))
 	assert.Error(t, APIKeyValue(""))
@@ -272,6 +318,45 @@ func TestQuotaValue(t *testing.T) {
 	// Unknown unit: only non-negative check applies
 	q = 123.45
 	assert.NoError(t, QuotaValue(&q, "unknown"))
+}
+
+func TestQuotaValue_RMBDecimalPlaces(t *testing.T) {
+	// Accepted: values whose decimal representation has at most 8 fractional
+	// digits and stays within the RMB limit. 0.14/0.28/0.55/600.1234 are
+	// regression anchors for issue #293 -- the previous v*1e8 scaling check
+	// rejected them because its 1e-9 tolerance is comparable to the float64 ulp
+	// at these magnitudes.
+	for _, v := range []float64{
+		0, 800, 90000000,
+		0.14, 0.28, 0.55, 600.1234,
+		888.88, 1234.5678, 1000.12345678, 0.00000001,
+	} {
+		q := v
+		assert.NoError(t, QuotaValue(&q, "RMB"), "quota=%v", v)
+	}
+
+	// Rejected: more than 8 fractional digits.
+	for _, v := range []float64{100.123456789, 0.000000001} {
+		q := v
+		assert.Error(t, QuotaValue(&q, "RMB"), "quota=%v", v)
+	}
+
+	// Float-artifact input: reject rather than silently round. The sum must be
+	// computed at run time -- the compiler folds the constant expression 0.1+0.2
+	// to exactly 0.3, whose shortest representation is "0.3".
+	sum := 0.1
+	sum += 0.2
+	assert.Error(t, QuotaValue(&sum, "RMB"), "quota=%v", sum)
+
+	// Over the RMB limit: rejected by the limit check, not the decimal check.
+	q := 90000000.00000001
+	assert.Error(t, QuotaValue(&q, "RMB"))
+
+	// Non-finite values are rejected for both units.
+	nan, inf := math.NaN(), math.Inf(1)
+	assert.Error(t, QuotaValue(&nan, "RMB"))
+	assert.Error(t, QuotaValue(&inf, "RMB"))
+	assert.Error(t, QuotaValue(&inf, "total_token"))
 }
 
 func TestRateLimitPolicy(t *testing.T) {
@@ -366,6 +451,49 @@ func TestRouteRules(t *testing.T) {
 	assert.Error(t, RouteRules(rules))
 }
 
+func TestRouteRules_NilElements(t *testing.T) {
+	name := "r1"
+	cluster := "cluster_1"
+	weight := 100
+	validCond := "default_t()"
+
+	assert.NotPanics(t, func() {
+		// nil rule element: rejected with 422, not a panic
+		err := RouteRules(&shared.RouteRulesParam{
+			Rules: []*shared.AiRouteRuleParam{nil},
+		})
+		assert.Error(t, err)
+
+		validRule := func() *shared.AiRouteRuleParam {
+			return &shared.AiRouteRuleParam{
+				Name:    &name,
+				Cond:    &validCond,
+				Targets: []*shared.AiRouteTargetParam{{ClusterName: &cluster, Weight: &weight}},
+			}
+		}
+
+		// nil target element: rejected with 422, not a panic
+		rule := validRule()
+		rule.Targets = append(rule.Targets, nil)
+		assert.Error(t, RouteRules(&shared.RouteRulesParam{Rules: []*shared.AiRouteRuleParam{rule}}))
+
+		// all-nil targets: rejected, not a panic
+		rule = validRule()
+		rule.Targets = []*shared.AiRouteTargetParam{nil}
+		assert.Error(t, RouteRules(&shared.RouteRulesParam{Rules: []*shared.AiRouteRuleParam{rule}}))
+
+		// nil fallback element: rejected with 422, not a panic
+		rule = validRule()
+		rule.Fallbacks = []*shared.AiRouteFallbackParam{{ClusterName: &cluster}, nil}
+		assert.Error(t, RouteRules(&shared.RouteRulesParam{Rules: []*shared.AiRouteRuleParam{rule}}))
+
+		// all-nil fallbacks: rejected, not a panic
+		rule = validRule()
+		rule.Fallbacks = []*shared.AiRouteFallbackParam{nil}
+		assert.Error(t, RouteRules(&shared.RouteRulesParam{Rules: []*shared.AiRouteRuleParam{rule}}))
+	})
+}
+
 func TestConditionExpression(t *testing.T) {
 	cases := []struct {
 		name    string
@@ -401,195 +529,6 @@ func TestConditionExpression(t *testing.T) {
 	}
 }
 
-func TestLLMConfig(t *testing.T) {
-	c := &icluster_conf.LLMConfig{
-		Provider: lib.PString("openai"),
-		Models:   []string{"m1"},
-		ModelMappings: []*icluster_conf.Mapping{
-			{SourceModel: lib.PString("old"), TargetModel: lib.PString("new")},
-		},
-		Keys: []icluster_conf.ClusterKeyRef{
-			{Name: lib.PString("key-primary"), Weight: lib.PInt(70)},
-			{Name: lib.PString("key-secondary"), Weight: lib.PInt(30)},
-		},
-		KeyPolicy: &icluster_conf.KeyPolicy{
-			Strategy:            lib.PString("weighted_random"),
-			MaxRetries:          lib.PInt(3),
-			RetryBackoffInitial: lib.PInt(500),
-			RetryBackoffMax:     lib.PInt(5000),
-		},
-	}
-	assert.NoError(t, LLMConfig(c))
-
-	// duplicate model
-	c2 := *c
-	c2.Models = []string{"m1", "m1"}
-	assert.Error(t, LLMConfig(&c2))
-
-	// total weight not 100
-	c3 := *c
-	c3.Keys = []icluster_conf.ClusterKeyRef{
-		{Name: lib.PString("k1"), Weight: lib.PInt(50)},
-		{Name: lib.PString("k2"), Weight: lib.PInt(30)},
-	}
-	assert.Error(t, LLMConfig(&c3))
-
-	// duplicate key name
-	c4 := *c
-	c4.Keys = []icluster_conf.ClusterKeyRef{
-		{Name: lib.PString("k1"), Weight: lib.PInt(50)},
-		{Name: lib.PString("k1"), Weight: lib.PInt(50)},
-	}
-	assert.Error(t, LLMConfig(&c4))
-
-	// missing provider
-	c5 := &icluster_conf.LLMConfig{
-		Models: []string{"m1"},
-	}
-	assert.Error(t, LLMConfig(c5))
-
-	// invalid key_policy retry_backoff_max < retry_backoff_initial
-	c6 := *c
-	c6.KeyPolicy = &icluster_conf.KeyPolicy{
-		Strategy:            lib.PString("weighted_random"),
-		MaxRetries:          lib.PInt(3),
-		RetryBackoffInitial: lib.PInt(500),
-		RetryBackoffMax:     lib.PInt(100),
-	}
-	assert.Error(t, LLMConfig(&c6))
-
-	// invalid key_policy strategy
-	c7 := *c
-	c7.KeyPolicy = &icluster_conf.KeyPolicy{
-		Strategy: lib.PString("invalid"),
-	}
-	assert.Error(t, LLMConfig(&c7))
-
-	// strip_prefix=true without match_prefix
-	c8 := *c
-	c8.StripPrefix = lib.PBool(true)
-	assert.Error(t, LLMConfig(&c8))
-
-	// match_prefix not ending with '/'
-	c9 := *c
-	c9.MatchPrefix = lib.PString("openrouter")
-	assert.Error(t, LLMConfig(&c9))
-
-	// valid prefix configuration
-	c10 := *c
-	c10.MatchPrefix = lib.PString("openrouter/")
-	c10.StripPrefix = lib.PBool(true)
-	assert.NoError(t, LLMConfig(&c10))
-
-	// valid key_affinity
-	c11 := *c
-	c11.KeyAffinity = &icluster_conf.KeyAffinity{
-		Enabled:       lib.PBool(true),
-		TTL:           lib.PInt(600),
-		RedisPrefix:   lib.PString("bfe:ai:key_affinity"),
-		PenaltyEnable: lib.PBool(true),
-	}
-	assert.NoError(t, LLMConfig(&c11))
-
-	// invalid key_affinity.ttl
-	c12 := *c
-	c12.KeyAffinity = &icluster_conf.KeyAffinity{
-		TTL: lib.PInt(0),
-	}
-	assert.Error(t, LLMConfig(&c12))
-
-	// invalid key_affinity.redis_prefix
-	c13 := *c
-	c13.KeyAffinity = &icluster_conf.KeyAffinity{
-		RedisPrefix: lib.PString(""),
-	}
-	assert.Error(t, LLMConfig(&c13))
-
-	// valid normalize_upstream_error (full and partial)
-	c14 := *c
-	c14.NormalizeUpstreamError = &icluster_conf.NormalizeUpstreamError{
-		Enabled:            lib.PBool(true),
-		StreamEnabled:      lib.PBool(true),
-		UnrecognizedAction: lib.PString("rewrite_generic"),
-		MaxBodyBytes:       lib.PInt64(65536),
-		RedactSecrets:      lib.PBool(false),
-	}
-	assert.NoError(t, LLMConfig(&c14))
-
-	c15 := *c
-	c15.NormalizeUpstreamError = &icluster_conf.NormalizeUpstreamError{
-		Enabled: lib.PBool(true),
-	}
-	assert.NoError(t, LLMConfig(&c15))
-
-	// invalid normalize_upstream_error.unrecognized_action
-	c16 := *c
-	c16.NormalizeUpstreamError = &icluster_conf.NormalizeUpstreamError{
-		UnrecognizedAction: lib.PString("replace"),
-	}
-	assert.Error(t, LLMConfig(&c16))
-
-	// invalid normalize_upstream_error.max_body_bytes (negative / oversized)
-	c17 := *c
-	c17.NormalizeUpstreamError = &icluster_conf.NormalizeUpstreamError{
-		MaxBodyBytes: lib.PInt64(-1),
-	}
-	assert.Error(t, LLMConfig(&c17))
-
-	c18 := *c
-	c18.NormalizeUpstreamError = &icluster_conf.NormalizeUpstreamError{
-		MaxBodyBytes: lib.PInt64(4*1024*1024 + 1),
-	}
-	assert.Error(t, LLMConfig(&c18))
-
-	// boundary values are accepted: 0 (BFE default) and exactly 4MB
-	c19 := *c
-	c19.NormalizeUpstreamError = &icluster_conf.NormalizeUpstreamError{
-		MaxBodyBytes: lib.PInt64(0),
-	}
-	assert.NoError(t, LLMConfig(&c19))
-
-	c20 := *c
-	c20.NormalizeUpstreamError = &icluster_conf.NormalizeUpstreamError{
-		MaxBodyBytes: lib.PInt64(4 * 1024 * 1024),
-	}
-	assert.NoError(t, LLMConfig(&c20))
-}
-
-func TestInstancePool(t *testing.T) {
-	instances := []icluster_conf.Instance{
-		{Name: "backend-1", Addr: "10.0.0.1", Port: 8080, Weight: 100},
-	}
-	assert.NoError(t, InstancePool(instances))
-
-	instances[0].Weight = 0
-	assert.Error(t, InstancePool(instances))
-
-	// duplicate name
-	instances[0].Weight = 50
-	assert.Error(t, InstancePool([]icluster_conf.Instance{
-		{Name: "backend-1", Addr: "10.0.0.1", Port: 8080, Weight: 50},
-		{Name: "backend-1", Addr: "10.0.0.2", Port: 8080, Weight: 50},
-	}))
-
-	// duplicate (name, addr, port)
-	assert.Error(t, InstancePool([]icluster_conf.Instance{
-		{Name: "backend-1", Addr: "10.0.0.1", Port: 8080, Weight: 50},
-		{Name: "backend-1", Addr: "10.0.0.1", Port: 8080, Weight: 50},
-	}))
-
-	// same addr with empty name but different ports is allowed
-	assert.NoError(t, InstancePool([]icluster_conf.Instance{
-		{Addr: "10.0.0.1", Port: 8080, Weight: 50},
-		{Addr: "10.0.0.1", Port: 8081, Weight: 50},
-	}))
-
-	// same addr and port with empty name is not allowed
-	assert.Error(t, InstancePool([]icluster_conf.Instance{
-		{Addr: "10.0.0.1", Port: 8080, Weight: 50},
-		{Addr: "10.0.0.1", Port: 8080, Weight: 50},
-	}))
-}
 
 func TestExpiredTime(t *testing.T) {
 	minusOne := int64(-1)
@@ -1091,3 +1030,7 @@ func TestTrafficMirrorRules(t *testing.T) {
 	rule.PathRewrite = nil
 	assert.NoError(t, TrafficMirrorRules(&shared.TrafficMirrorRulesParam{Rules: []*shared.TrafficMirrorRuleParam{rule}}))
 }
+
+// TestLLMConfigEnsureReasoningContent covers the value-domain check for
+// llm_config.ensure_reasoning_content: only protocols with an injection
+// implementation are accepted, and entries must be non-empty and unique.

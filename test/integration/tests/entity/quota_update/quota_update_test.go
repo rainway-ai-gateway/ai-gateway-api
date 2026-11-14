@@ -53,7 +53,7 @@ func TestEntity_QuotaUpdate(t *testing.T) {
 	}
 
 	// 初始化为有限 total_token 配额
-	_, err = testutil.GetClient().Patch("/open-api/v1/entities/"+entityID, map[string]interface{}{
+	testutil.MustPatch(t, "/open-api/v1/entities/"+entityID, map[string]interface{}{
 		"quota_plan": map[string]interface{}{
 			"unlimited":    false,
 			"quota":        1000,
@@ -61,10 +61,6 @@ func TestEntity_QuotaUpdate(t *testing.T) {
 			"reset_period": "monthly",
 		},
 	})
-	if err != nil {
-		t.Fatalf("setup quota failed: %v", err)
-	}
-
 	t.Run("E-9-001 仅修改 quota（单位不变）后余额正确", func(t *testing.T) {
 		name := testutil.UniqueEntityName()
 		id, err := testutil.CreateEntity(name, typeName, "")
@@ -73,7 +69,7 @@ func TestEntity_QuotaUpdate(t *testing.T) {
 		}
 		defer testutil.DeleteEntity(id)
 
-		_, err = testutil.GetClient().Patch("/open-api/v1/entities/"+id, map[string]interface{}{
+		testutil.MustPatch(t, "/open-api/v1/entities/"+id, map[string]interface{}{
 			"quota_plan": map[string]interface{}{
 				"unlimited":    false,
 				"quota":        1000,
@@ -81,10 +77,6 @@ func TestEntity_QuotaUpdate(t *testing.T) {
 				"reset_period": "monthly",
 			},
 		})
-		if err != nil {
-			t.Fatalf("setup quota failed: %v", err)
-		}
-
 		resp, err := testutil.GetClient().Patch("/open-api/v1/entities/"+id, map[string]interface{}{
 			"quota_plan": map[string]interface{}{
 				"unlimited": false,
@@ -111,7 +103,7 @@ func TestEntity_QuotaUpdate(t *testing.T) {
 		}
 		defer testutil.DeleteEntity(id)
 
-		_, err = testutil.GetClient().Patch("/open-api/v1/entities/"+id, map[string]interface{}{
+		testutil.MustPatch(t, "/open-api/v1/entities/"+id, map[string]interface{}{
 			"quota_plan": map[string]interface{}{
 				"unlimited":    false,
 				"quota":        1000.1234,
@@ -119,10 +111,6 @@ func TestEntity_QuotaUpdate(t *testing.T) {
 				"reset_period": "monthly",
 			},
 		})
-		if err != nil {
-			t.Fatalf("setup quota failed: %v", err)
-		}
-
 		resp, err := testutil.GetClient().Patch("/open-api/v1/entities/"+id, map[string]interface{}{
 			"quota_plan": map[string]interface{}{
 				"unlimited": false,
@@ -149,7 +137,7 @@ func TestEntity_QuotaUpdate(t *testing.T) {
 		}
 		defer testutil.DeleteEntity(id)
 
-		_, err = testutil.GetClient().Patch("/open-api/v1/entities/"+id, map[string]interface{}{
+		testutil.MustPatch(t, "/open-api/v1/entities/"+id, map[string]interface{}{
 			"quota_plan": map[string]interface{}{
 				"unlimited":    false,
 				"quota":        1000,
@@ -157,10 +145,6 @@ func TestEntity_QuotaUpdate(t *testing.T) {
 				"reset_period": "monthly",
 			},
 		})
-		if err != nil {
-			t.Fatalf("setup quota failed: %v", err)
-		}
-
 		resp, err := testutil.GetClient().Patch("/open-api/v1/entities/"+id, map[string]interface{}{
 			"quota_plan": map[string]interface{}{
 				"unlimited": false,
@@ -186,7 +170,7 @@ func TestEntity_QuotaUpdate(t *testing.T) {
 		}
 		defer testutil.DeleteEntity(id)
 
-		_, err = testutil.GetClient().Patch("/open-api/v1/entities/"+id, map[string]interface{}{
+		testutil.MustPatch(t, "/open-api/v1/entities/"+id, map[string]interface{}{
 			"quota_plan": map[string]interface{}{
 				"unlimited":    false,
 				"quota":        1000,
@@ -194,10 +178,6 @@ func TestEntity_QuotaUpdate(t *testing.T) {
 				"reset_period": "monthly",
 			},
 		})
-		if err != nil {
-			t.Fatalf("setup quota failed: %v", err)
-		}
-
 		resp, err := testutil.GetClient().Patch("/open-api/v1/entities/"+id, map[string]interface{}{
 			"quota_plan": map[string]interface{}{
 				"unlimited": true,
@@ -221,14 +201,11 @@ func TestEntity_QuotaUpdate(t *testing.T) {
 		}
 		defer testutil.DeleteEntity(id)
 
-		_, err = testutil.GetClient().Patch("/open-api/v1/entities/"+id, map[string]interface{}{
+		testutil.MustPatch(t, "/open-api/v1/entities/"+id, map[string]interface{}{
 			"quota_plan": map[string]interface{}{
 				"unlimited": true,
 			},
 		})
-		if err != nil {
-			t.Fatalf("setup unlimited failed: %v", err)
-		}
 
 		resp, err := testutil.GetClient().Patch("/open-api/v1/entities/"+id, map[string]interface{}{
 			"quota_plan": map[string]interface{}{
@@ -255,7 +232,7 @@ func TestEntity_QuotaUpdate(t *testing.T) {
 		}
 		defer testutil.DeleteEntity(id)
 
-		_, err = testutil.GetClient().Patch("/open-api/v1/entities/"+id, map[string]interface{}{
+		testutil.MustPatch(t, "/open-api/v1/entities/"+id, map[string]interface{}{
 			"quota_plan": map[string]interface{}{
 				"unlimited":    false,
 				"quota":        1000,
@@ -263,10 +240,6 @@ func TestEntity_QuotaUpdate(t *testing.T) {
 				"reset_period": "monthly",
 			},
 		})
-		if err != nil {
-			t.Fatalf("setup quota failed: %v", err)
-		}
-
 		resp, err := testutil.GetClient().Patch("/open-api/v1/entities/"+id, map[string]interface{}{
 			"allow_models": []string{"gpt-4"},
 		})
@@ -288,7 +261,7 @@ func TestEntity_QuotaUpdate(t *testing.T) {
 		}
 		defer testutil.DeleteEntity(id)
 
-		_, err = testutil.GetClient().Patch("/open-api/v1/entities/"+id, map[string]interface{}{
+		testutil.MustPatch(t, "/open-api/v1/entities/"+id, map[string]interface{}{
 			"quota_plan": map[string]interface{}{
 				"unlimited":    false,
 				"quota":        1000,
@@ -296,10 +269,6 @@ func TestEntity_QuotaUpdate(t *testing.T) {
 				"reset_period": "monthly",
 			},
 		})
-		if err != nil {
-			t.Fatalf("setup quota failed: %v", err)
-		}
-
 		// 构造已使用量：Redis 中剩余 400，即 used = 600
 		sm.SetQuotaRemaining(id, 400, "total_token")
 
@@ -328,7 +297,7 @@ func TestEntity_QuotaUpdate(t *testing.T) {
 		}
 		defer testutil.DeleteEntity(id)
 
-		_, err = testutil.GetClient().Patch("/open-api/v1/entities/"+id, map[string]interface{}{
+		testutil.MustPatch(t, "/open-api/v1/entities/"+id, map[string]interface{}{
 			"quota_plan": map[string]interface{}{
 				"unlimited":    false,
 				"quota":        1000.1234,
@@ -336,10 +305,6 @@ func TestEntity_QuotaUpdate(t *testing.T) {
 				"reset_period": "monthly",
 			},
 		})
-		if err != nil {
-			t.Fatalf("setup quota failed: %v", err)
-		}
-
 		// 构造已使用量：Redis 中剩余 400.0000，即 used = 600.1234
 		sm.SetQuotaRemaining(id, 400.0000, "RMB")
 
@@ -360,7 +325,7 @@ func TestEntity_QuotaUpdate(t *testing.T) {
 		assert.InDelta(t, float64(199.8766), balance["remaining"], 0.00001)
 	})
 
-	t.Run("E-9-009 配额总量修改为 0 后剩余额度清零（回归 issue #136）", func(t *testing.T) {
+	t.Run("E-9-009 配额总量修改为 0 后剩余额度展示清零、欠费保留在 Redis（回归 issue #136 / #1476）", func(t *testing.T) {
 		name := testutil.UniqueEntityName()
 		id, err := testutil.CreateEntity(name, typeName, "")
 		if err != nil {
@@ -368,7 +333,7 @@ func TestEntity_QuotaUpdate(t *testing.T) {
 		}
 		defer testutil.DeleteEntity(id)
 
-		_, err = testutil.GetClient().Patch("/open-api/v1/entities/"+id, map[string]interface{}{
+		testutil.MustPatch(t, "/open-api/v1/entities/"+id, map[string]interface{}{
 			"quota_plan": map[string]interface{}{
 				"unlimited":    false,
 				"quota":        1000,
@@ -376,10 +341,6 @@ func TestEntity_QuotaUpdate(t *testing.T) {
 				"reset_period": "monthly",
 			},
 		})
-		if err != nil {
-			t.Fatalf("setup quota failed: %v", err)
-		}
-
 		// 构造已使用量：Redis 中剩余 400，即 used = 600
 		sm.SetQuotaRemaining(id, 400, "total_token")
 
@@ -395,16 +356,17 @@ func TestEntity_QuotaUpdate(t *testing.T) {
 		}
 		testutil.AssertSuccess(t, resp)
 
-		// remaining = max(0, 0 - 600) = 0
+		// issue #1476：remaining = 0 - 600 = -600 不再钳零，欠费保留在 Redis
+		// （负值表示新配额仍不足以覆盖已用量，BFE 鉴权继续拒绝）；对外展示
+		// 的 remaining 钳 0，used 如实为 600。
 		balance := fetchEntityBalance(t, id)
-		assert.InDelta(t, float64(0), balance["used"], 0.00001)
+		assert.InDelta(t, float64(600), balance["used"], 0.00001)
 		assert.InDelta(t, float64(0), balance["remaining"], 0.00001)
 
-		// Redis 余额被同步清零，BFE 将立即拒绝该实体的请求（QuotaExhausted）
-		assert.InDelta(t, float64(0), sm.GetQuotaRemaining(id, "total_token"), 0.00001)
+		assert.InDelta(t, float64(-600), sm.GetQuotaRemaining(id, "total_token"), 0.00001)
 	})
 
-	t.Run("E-9-010 RMB 配额总量修改为 0 后剩余额度清零", func(t *testing.T) {
+	t.Run("E-9-010 RMB 配额总量修改为 0 后剩余额度展示清零、欠费保留在 Redis", func(t *testing.T) {
 		name := testutil.UniqueEntityName()
 		id, err := testutil.CreateEntity(name, typeName, "")
 		if err != nil {
@@ -412,7 +374,7 @@ func TestEntity_QuotaUpdate(t *testing.T) {
 		}
 		defer testutil.DeleteEntity(id)
 
-		_, err = testutil.GetClient().Patch("/open-api/v1/entities/"+id, map[string]interface{}{
+		testutil.MustPatch(t, "/open-api/v1/entities/"+id, map[string]interface{}{
 			"quota_plan": map[string]interface{}{
 				"unlimited":    false,
 				"quota":        1000.1234,
@@ -420,10 +382,6 @@ func TestEntity_QuotaUpdate(t *testing.T) {
 				"reset_period": "monthly",
 			},
 		})
-		if err != nil {
-			t.Fatalf("setup quota failed: %v", err)
-		}
-
 		// 构造已使用量：Redis 中剩余 400.0000，即 used = 600.1234
 		sm.SetQuotaRemaining(id, 400.0000, "RMB")
 
@@ -439,10 +397,113 @@ func TestEntity_QuotaUpdate(t *testing.T) {
 		}
 		testutil.AssertSuccess(t, resp)
 
+		// issue #1476：同 E-9-009，负数保留在 Redis（RMB 为 1e-8 定点口径）。
 		balance := fetchEntityBalance(t, id)
-		assert.InDelta(t, float64(0), balance["used"], 0.00001)
+		assert.InDelta(t, float64(600.1234), balance["used"], 0.00001)
 		assert.InDelta(t, float64(0), balance["remaining"], 0.00001)
-		assert.InDelta(t, float64(0), sm.GetQuotaRemaining(id, "RMB"), 0.00001)
+		assert.InDelta(t, float64(-600.1234), sm.GetQuotaRemaining(id, "RMB"), 0.00001)
+	})
+
+	t.Run("E-9-011 欠费余额（Redis 为负）下 used 超 quota、remaining 展示 0", func(t *testing.T) {
+		name := testutil.UniqueEntityName()
+		id, err := testutil.CreateEntity(name, typeName, "")
+		if err != nil {
+			t.Fatalf("setup failed: %v", err)
+		}
+		defer testutil.DeleteEntity(id)
+
+		testutil.MustPatch(t, "/open-api/v1/entities/"+id, map[string]interface{}{
+			"quota_plan": map[string]interface{}{
+				"unlimited":    false,
+				"quota":        1000,
+				"unit":         "total_token",
+				"reset_period": "monthly",
+			},
+		})
+		// issue #1476：BFE 全额扣减后余额可为负——模拟欠费 100，
+		// 实际消耗 used = 1000 - (-100) = 1100，允许大于 quota。
+		sm.SetQuotaRemaining(id, -100, "total_token")
+
+		balance := fetchEntityBalance(t, id)
+		assert.InDelta(t, float64(1100), balance["used"], 0.00001)
+		assert.InDelta(t, float64(0), balance["remaining"], 0.00001)
+	})
+
+	t.Run("E-9-012 欠费状态下调大配额仍不足时 remaining 保持为负", func(t *testing.T) {
+		name := testutil.UniqueEntityName()
+		id, err := testutil.CreateEntity(name, typeName, "")
+		if err != nil {
+			t.Fatalf("setup failed: %v", err)
+		}
+		defer testutil.DeleteEntity(id)
+
+		testutil.MustPatch(t, "/open-api/v1/entities/"+id, map[string]interface{}{
+			"quota_plan": map[string]interface{}{
+				"unlimited":    false,
+				"quota":        1000,
+				"unit":         "total_token",
+				"reset_period": "monthly",
+			},
+		})
+		// used = 1000 - (-100) = 1100
+		sm.SetQuotaRemaining(id, -100, "total_token")
+
+		resp, err := testutil.GetClient().Patch("/open-api/v1/entities/"+id, map[string]interface{}{
+			"quota_plan": map[string]interface{}{
+				"unlimited": false,
+				"quota":     1050,
+				"unit":      "total_token",
+			},
+		})
+		if err != nil {
+			t.Fatalf("request failed: %v", err)
+		}
+		testutil.AssertSuccess(t, resp)
+
+		// issue #1476：targetRemaining = 1050 - 1100 = -50 不再钳零，
+		// 欠费不会被调额凭空抹掉；used 保持 1100，展示 remaining = 0。
+		balance := fetchEntityBalance(t, id)
+		assert.InDelta(t, float64(1100), balance["used"], 0.00001)
+		assert.InDelta(t, float64(0), balance["remaining"], 0.00001)
+		assert.InDelta(t, float64(-50), sm.GetQuotaRemaining(id, "total_token"), 0.00001)
+	})
+
+	t.Run("E-9-013 欠费状态下调大配额覆盖欠费后 remaining 转正", func(t *testing.T) {
+		name := testutil.UniqueEntityName()
+		id, err := testutil.CreateEntity(name, typeName, "")
+		if err != nil {
+			t.Fatalf("setup failed: %v", err)
+		}
+		defer testutil.DeleteEntity(id)
+
+		testutil.MustPatch(t, "/open-api/v1/entities/"+id, map[string]interface{}{
+			"quota_plan": map[string]interface{}{
+				"unlimited":    false,
+				"quota":        1000,
+				"unit":         "total_token",
+				"reset_period": "monthly",
+			},
+		})
+		// used = 1000 - (-100) = 1100
+		sm.SetQuotaRemaining(id, -100, "total_token")
+
+		resp, err := testutil.GetClient().Patch("/open-api/v1/entities/"+id, map[string]interface{}{
+			"quota_plan": map[string]interface{}{
+				"unlimited": false,
+				"quota":     2000,
+				"unit":      "total_token",
+			},
+		})
+		if err != nil {
+			t.Fatalf("request failed: %v", err)
+		}
+		testutil.AssertSuccess(t, resp)
+
+		// targetRemaining = 2000 - 1100 = 900，鉴权恢复放行。
+		balance := fetchEntityBalance(t, id)
+		assert.InDelta(t, float64(1100), balance["used"], 0.00001)
+		assert.InDelta(t, float64(900), balance["remaining"], 0.00001)
+		assert.InDelta(t, float64(900), sm.GetQuotaRemaining(id, "total_token"), 0.00001)
 	})
 
 	t.Cleanup(func() {

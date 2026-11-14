@@ -157,11 +157,14 @@ curl -X GET "http://api-server:port/inner-api/v1/configs/tls_conf/server_data_co
                         "SessionAffinity": true,
                         "SessionAffinityTTL": 600,
                         "SessionAffinityRedisPrefix": "bfe:ai:key_affinity",
-                        "SessionAffinityPenaltyEnable": true
+                        "SessionAffinityPenaltyEnable": true,
+                        "SessionAffinityPenaltyTTL429": 60,
+                        "SessionAffinityPenaltyTTLAuth": 300
                     },
                     "MatchPrefix": "deepseek/",
                     "StripPrefix": true,
                     "ModelProtocols": ["openai"],
+                    "EnsureReasoningContent": ["openai"],
                     "NormalizeUpstreamError": {
                         "Enabled": true,
                         "StreamEnabled": false,
@@ -234,9 +237,12 @@ curl -X GET "http://api-server:port/inner-api/v1/configs/tls_conf/server_data_co
 | KeyPolicy.SessionAffinityTTL | int | 绑定空闲超时时间，单位秒；对应 OpenAPI `llm_config.key_affinity.ttl`，默认 `600`；命中后 BFE 会刷新 TTL |
 | KeyPolicy.SessionAffinityRedisPrefix | string | Redis 绑定键前缀；对应 OpenAPI `llm_config.key_affinity.redis_prefix`，默认 `"bfe:ai:key_affinity"` |
 | KeyPolicy.SessionAffinityPenaltyEnable | bool | 是否开启 Key 惩罚；对应 OpenAPI `llm_config.key_affinity.penalty_enable`，默认 `true` |
+| KeyPolicy.SessionAffinityPenaltyTTL429 | int | 上游 429 时的惩罚时长（秒）；对应 OpenAPI `llm_config.key_affinity.penalty_ttl_429`，默认 `60`；控制面缺省时导出默认值，BFE 加载期再兜底一层 |
+| KeyPolicy.SessionAffinityPenaltyTTLAuth | int | 上游 401/402/403 时的惩罚时长（秒）；对应 OpenAPI `llm_config.key_affinity.penalty_ttl_auth`，默认 `300`；语义同上 |
 | MatchPrefix | string | 需要匹配的 provider/model 前缀；对应 OpenAPI `llm_config.match_prefix` |
 | StripPrefix | bool | 是否裁剪 `MatchPrefix` 前缀；对应 OpenAPI `llm_config.strip_prefix` |
 | ModelProtocols | []string | 该集群所属 provider 支持的模型访问协议；来源为 OpenAPI `/providers` 的 `model_protocols`。枚举值如 `openai`、`anthropic`；为空数组时 BFE 兜底为仅支持 `openai` |
+| EnsureReasoningContent | []string | 需要对 assistant 消息补齐 `reasoning_content` 的协议列表；对应 OpenAPI `llm_config.ensure_reasoning_content`。**未配置时该字段为 `null`**（导出结构体不带 `omitempty`，BFE 反序列化为 nil = 关闭，请求逐字节透传）。取值仅 `openai`、`anthropic`，且须 ⊆ 本结构体的 `ModelProtocols`（为空按 `["openai"]`）；`gemini` 无注入落点，控制面与 BFE 加载期均拒绝 |
 | NormalizeUpstreamError | object | 上游错误体归一配置；对应 OpenAPI `llm_config.normalize_upstream_error`；**未配置时整个字段不下发**（BFE 关闭归一，历史透传行为）；缺省字段不在导出中合成默认值，由 BFE 加载期 `Effective()` 合成（单一默认值来源） |
 | NormalizeUpstreamError.Enabled | bool | 非流式归一开关；对应 `normalize_upstream_error.enabled`，默认 `false` |
 | NormalizeUpstreamError.StreamEnabled | bool | 流式（SSE）归一开关；对应 `normalize_upstream_error.stream_enabled`，默认 `false` |
@@ -307,7 +313,7 @@ curl -X GET "http://api-server:port/inner-api/v1/configs/tls_conf/server_data_co
 | `EPPCheck.SuccessThreshold` | int | `check.success_threshold`，默认 `2` |
 | `EPPTimeout` | object | 来源 OpenAPI `epp_runtime.timeout`；**未配置 `epp_runtime` 时不下发**，由 BFE 加载期补默认 |
 | `EPPTimeout.Connect` | string | `timeout.connect`，默认 `500ms` |
-| `EPPTimeout.Call` | string | `timeout.call`，默认 `3s` |
+| `EPPTimeout.Call` | string | `timeout.call`，默认 `11s` |
 | `EPPBreaker` | object | **固定** `{ "Disabled": true }`（关闭熔断）；`WindowSize`/`MinVolume`/`ErrorRatePercent`/`OpenTimeout` 不下发 |
 
 > **说明**：

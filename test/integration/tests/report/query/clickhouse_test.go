@@ -261,14 +261,14 @@ func TestClickHouseBackend_Overview(t *testing.T) {
 		var data chOverviewData
 		getCHJSON(t, client, reportPrefix+"/overview", chWindowQuery(), &data)
 
-		assert.Equal(t, int64(660), data.RequestTotal)
+		assert.Equal(t, int64(680), data.RequestTotal)
 		assert.Equal(t, int64(200), data.ErrorTotal)
-		assert.InDelta(t, 200.0/660.0, data.ErrorRate, 1e-9)
+		assert.InDelta(t, 200.0/680.0, data.ErrorRate, 1e-9)
 		assert.Equal(t, int64(6600), data.InputTokens)
 		assert.Equal(t, int64(1320), data.OutputTokens)
 		assert.Equal(t, int64(7920), data.TotalTokens)
 
-		// latency_avg = all_time_sum/request_total = 66000/660 = 100ms；
+		// latency_avg = all_time_sum/request_total = 68000/680 = 100ms；
 		// latency_max = MAX(all_time_sum/request_count)（各组均 100ms）。
 		assert.InDelta(t, 100, data.LatencyAvgMs, 1e-9)
 		assert.InDelta(t, 100, data.LatencyMaxMs, 1e-9)
@@ -277,7 +277,8 @@ func TestClickHouseBackend_Overview(t *testing.T) {
 		require.NotNil(t, data.LatencyP90Ms)
 		require.NotNil(t, data.LatencyP99Ms)
 
-		// ttft/tpot 聚合于 stream 请求（450 个），微秒→毫秒。
+		// ttft/tpot 聚合于 stream 请求（450 个），微秒→毫秒；行 F（非流式
+		// ttft_us_sum=40000，issue #315 污染复现行）不得计入分子。
 		assert.InDelta(t, 225000.0/450/1000, data.TtftAvgMs, 1e-9) // 0.5ms
 		assert.InDelta(t, 22500.0/450/1000, data.TpotAvgMs, 1e-9)  // 0.05ms
 
@@ -336,7 +337,7 @@ func TestClickHouseBackend_TimeSeries(t *testing.T) {
 		assert.InDelta(t, 10, *data.Series[0].Value, 1e-9) // 600/60
 		assert.Equal(t, epoch("2030-09-15 10:01:00"), data.Series[1].Time)
 		require.NotNil(t, data.Series[1].Value)
-		assert.InDelta(t, 1, *data.Series[1].Value, 1e-9) // 60/60
+		assert.InDelta(t, 80.0/60, *data.Series[1].Value, 1e-9) // (50+10+20)/60，含行 F
 	})
 
 	t.Run("tokens", func(t *testing.T) {
@@ -351,6 +352,31 @@ func TestClickHouseBackend_TimeSeries(t *testing.T) {
 		assert.InDelta(t, 10, *data.Series[1].Input, 1e-9) // 600/60
 		assert.InDelta(t, 2, *data.Series[1].Output, 1e-9)
 		assert.InDelta(t, 12, *data.Series[1].Total, 1e-9)
+	})
+
+	t.Run("ttft_tpot", func(t *testing.T) {
+		// 流式口径（issue #315）：每桶 = 桶内 ai_stream=1 行合计 ÷ 流式请求数
+		// ÷ 1000；行 F（10:01 桶内非流式、ttft_us_sum=40000）不得计入分子。
+		for _, tc := range []struct {
+			metric   string
+			bucket00 float64 // 10:00：(50000+150000)/(100+300)/1000
+			bucket01 float64 // 10:01：25000/50/1000
+		}{
+			{"ttft", 0.5, 0.5},
+			{"tpot", 0.05, 0.05},
+		} {
+			var data timeseriesData
+			getCHJSON(t, client, reportPrefix+"/timeseries", with(chWindowQuery(), "metric", tc.metric), &data)
+
+			assert.Equal(t, 60, data.BucketSec)
+			require.Len(t, data.Series, 2)
+			assert.Equal(t, epoch("2030-09-15 10:00:00"), data.Series[0].Time)
+			require.NotNil(t, data.Series[0].Value)
+			assert.InDelta(t, tc.bucket00, *data.Series[0].Value, 1e-9)
+			assert.Equal(t, epoch("2030-09-15 10:01:00"), data.Series[1].Time)
+			require.NotNil(t, data.Series[1].Value)
+			assert.InDelta(t, tc.bucket01, *data.Series[1].Value, 1e-9)
+		}
 	})
 
 	t.Run("cost", func(t *testing.T) {
@@ -417,7 +443,7 @@ func TestClickHouseBackend_TimeSeries(t *testing.T) {
 		assert.InDelta(t, 400.0/60, byKey[pointKey{epoch("2030-09-15 10:00:00"), "hit"}], 1e-9)
 		assert.InDelta(t, 200.0/60, byKey[pointKey{epoch("2030-09-15 10:00:00"), "miss"}], 1e-9)
 		assert.InDelta(t, 50.0/60, byKey[pointKey{epoch("2030-09-15 10:01:00"), "hit"}], 1e-9)
-		assert.InDelta(t, 10.0/60, byKey[pointKey{epoch("2030-09-15 10:01:00"), ""}], 1e-9)
+		assert.InDelta(t, 30.0/60, byKey[pointKey{epoch("2030-09-15 10:01:00"), ""}], 1e-9)
 	})
 }
 
@@ -431,7 +457,7 @@ func TestClickHouseBackend_Rankings(t *testing.T) {
 		var data rankingsData
 		getCHJSON(t, client, reportPrefix+"/rankings", with(chWindowQuery(), "dimension", "model"), &data)
 
-		require.Len(t, data.Items, 3)
+		require.Len(t, data.Items, 4)
 		assert.Equal(t, "gpt-4o", data.Items[0].Name)
 		assert.Equal(t, int64(350), data.Items[0].RequestCount)
 		assert.Equal(t, int64(200), data.Items[0].ErrorCount)
@@ -439,8 +465,10 @@ func TestClickHouseBackend_Rankings(t *testing.T) {
 		assert.Equal(t, int64(700), data.Items[0].OutputTokens)
 		assert.Equal(t, "gpt-4", data.Items[1].Name)
 		assert.Equal(t, int64(300), data.Items[1].RequestCount)
-		assert.Equal(t, "claude", data.Items[2].Name)
-		assert.Equal(t, int64(10), data.Items[2].RequestCount)
+		assert.Equal(t, "llama-3", data.Items[2].Name) // 行 F
+		assert.Equal(t, int64(20), data.Items[2].RequestCount)
+		assert.Equal(t, "claude", data.Items[3].Name)
+		assert.Equal(t, int64(10), data.Items[3].RequestCount)
 	})
 
 	t.Run("status", func(t *testing.T) {
@@ -449,7 +477,7 @@ func TestClickHouseBackend_Rankings(t *testing.T) {
 
 		require.Len(t, data.Items, 2)
 		assert.Equal(t, "200", data.Items[0].Name)
-		assert.Equal(t, int64(460), data.Items[0].RequestCount)
+		assert.Equal(t, int64(480), data.Items[0].RequestCount)
 		assert.Equal(t, "500", data.Items[1].Name)
 		assert.Equal(t, int64(200), data.Items[1].RequestCount)
 	})
@@ -472,9 +500,9 @@ func TestClickHouseBackend_Rankings(t *testing.T) {
 
 		require.Len(t, data.Items, 2)
 		assert.Equal(t, "0", data.Items[0].Name)
-		assert.Equal(t, int64(510), data.Items[0].RequestCount)
+		assert.Equal(t, int64(530), data.Items[0].RequestCount) // B+C+E+F
 		assert.Equal(t, "1", data.Items[1].Name)
-		assert.Equal(t, int64(150), data.Items[1].RequestCount)
+		assert.Equal(t, int64(150), data.Items[1].RequestCount) // A+D
 	})
 
 	t.Run("intent_answer", func(t *testing.T) {
@@ -507,10 +535,10 @@ func TestClickHouseBackend_Distribution(t *testing.T) {
 		for _, one := range data.Items {
 			byName[one.Name] = one
 		}
-		assert.Equal(t, int64(460), byName["200"].RequestCount)
-		assert.InDelta(t, 460.0/660.0, byName["200"].Ratio, 1e-9)
+		assert.Equal(t, int64(480), byName["200"].RequestCount)
+		assert.InDelta(t, 480.0/680.0, byName["200"].Ratio, 1e-9)
 		assert.Equal(t, int64(200), byName["500"].RequestCount)
-		assert.InDelta(t, 200.0/660.0, byName["500"].Ratio, 1e-9)
+		assert.InDelta(t, 200.0/680.0, byName["500"].Ratio, 1e-9)
 		assert.InDelta(t, 1, byName["200"].Ratio+byName["500"].Ratio, 1e-9)
 	})
 
@@ -518,14 +546,15 @@ func TestClickHouseBackend_Distribution(t *testing.T) {
 		var data distributionData
 		getCHJSON(t, client, reportPrefix+"/distribution", with(chWindowQuery(), "dimension", "protocol"), &data)
 
-		require.Len(t, data.Items, 2)
+		require.Len(t, data.Items, 3)
 		byName := map[string]distItem{}
 		for _, one := range data.Items {
 			byName[one.Name] = one
 		}
 		assert.Equal(t, int64(650), byName["openai"].RequestCount)
+		assert.Equal(t, int64(20), byName["anthropic"].RequestCount) // 行 F
 		assert.Equal(t, int64(10), byName["unknown"].RequestCount)
-		assert.InDelta(t, 10.0/660.0, byName["unknown"].Ratio, 1e-9)
+		assert.InDelta(t, 10.0/680.0, byName["unknown"].Ratio, 1e-9)
 	})
 
 	t.Run("cache_status", func(t *testing.T) {
@@ -538,9 +567,9 @@ func TestClickHouseBackend_Distribution(t *testing.T) {
 			byName[one.Name] = one
 		}
 		assert.Equal(t, int64(450), byName["hit"].RequestCount)
-		assert.InDelta(t, 450.0/660.0, byName["hit"].Ratio, 1e-9)
+		assert.InDelta(t, 450.0/680.0, byName["hit"].Ratio, 1e-9)
 		assert.Equal(t, int64(200), byName["miss"].RequestCount)
-		assert.Equal(t, int64(10), byName["unknown"].RequestCount)
+		assert.Equal(t, int64(30), byName["unknown"].RequestCount)
 	})
 
 	t.Run("mirror_hit", func(t *testing.T) {
@@ -552,9 +581,9 @@ func TestClickHouseBackend_Distribution(t *testing.T) {
 		for _, one := range data.Items {
 			byName[one.Name] = one
 		}
-		assert.Equal(t, int64(510), byName["0"].RequestCount)
+		assert.Equal(t, int64(530), byName["0"].RequestCount)
 		assert.Equal(t, int64(150), byName["1"].RequestCount)
-		assert.InDelta(t, 150.0/660.0, byName["1"].Ratio, 1e-9)
+		assert.InDelta(t, 150.0/680.0, byName["1"].Ratio, 1e-9)
 	})
 }
 

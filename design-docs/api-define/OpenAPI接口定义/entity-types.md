@@ -79,8 +79,8 @@
 
 | 参数名 | 类型 | 参数含义 | 必填 | 补充描述 | 合法性条件 |
 | - | - | - | - | - | - |
-| page | int | 页码 | N | 默认1 | 有效值 >0；<=0 按 1 处理 |
-| page_size | int | 每页条数 | N | 默认20，最大100 | 有效范围 1-100；<1 按 20 处理，>100 按 100 处理 |
+| page | int | 页码 | N | **未传分页参数时返回全部匹配记录**；显式分页时默认 1 | 有效值 >0；<=0 按 1 处理 |
+| page_size | int | 每页条数 | N | **未传分页参数时返回全部匹配记录**；显式分页时默认 20，最大 100 | 有效范围 1-100；<1 按 20 处理，>100 按 100 处理 |
 | id | int64 | 按Entity-Type内部ID过滤 | N | - | - |
 | type_name | string | 按类型名过滤 | N | - | - |
 | level | int | 按层级级别过滤 | N | - | - |
@@ -92,7 +92,7 @@
 | 参数名 | 类型 | 参数含义 | 补充描述 |
 | - | - | - | - |
 | list | []EntityType | Entity-Type列表 | 元素字段同3.2.1创建Entity-Type返回数据 |
-| pagination | object | 分页信息 | 包含`page`、`page_size`、`total` |
+| pagination | object | 分页信息 | 包含`page`、`page_size`、`total`；未传分页参数时返回全部匹配记录，`page=1`、`page_size=total`（空集合为 0）；`total` 为满足 `id`/`type_name`/`level` 过滤条件的总条数 |
 
 ---
 
@@ -125,7 +125,7 @@
 
 | 项目 | 值 | 说明 |
 | - | - | - |
-| 含义 | 更新Entity-Type描述 | - |
+| 含义 | 更新Entity-Type（描述与层级级别） | - |
 | 端点 | /entity-types/{type_name} | - |
 | 版本 | v1 | - |
 | method | PATCH | - |
@@ -141,6 +141,11 @@
 | 参数名 | 类型 | 参数含义 | 必填 | 补充描述 | 合法性条件 |
 | - | - | - | - | - | - |
 | description | string | 类型描述 | N | - | 非必填；若传入，长度 0-255 字节（按 UTF-8 字节计）；不能包含控制字符；字段规则同 [§1 数据模型](#1-数据模型) |
+| level | int | 层级级别 | N | - | 非必填；若传入，取值范围 1-5 的整数（数字越小级别越高）；若新值使该类型下已有 Entity 的父子层级约束（父类型 level 必须小于子类型 level）不再满足，返回 409 且不做任何修改 |
+
+**只读字段**：请求体中的 `type_name` 与 `create_time` 不被改写——类型名由 URI 中的 `type_name` 指定，`create_time` 为系统生成。
+
+**约束**：若修改 `level` 后该类型下已有 Entity 的存量父子关系（父 Entity-Type 的 `level` 必须**小于**子 Entity-Type 的 `level`）不再满足，整个更新返回 `ErrNum=409`，库中 `level` 与其他字段均保持不变；调用方可解除冲突关系（如调整子级或删除子 Entity）后重试。仅修改 `description`、或不改变 `level` 取值时，不触发一致性检查。
 
 **返回数据（Data内容）**
 

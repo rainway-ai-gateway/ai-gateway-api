@@ -21,8 +21,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/rainway-ai-gateway/ai-gateway-api/integration/testutil"
 	helper "github.com/rainway-ai-gateway/ai-gateway-api/integration/tests/batch/helper"
+	"github.com/rainway-ai-gateway/ai-gateway-api/integration/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -45,6 +45,7 @@ func TestOpenAPI_Schema(t *testing.T) {
 	t.Run("entities", testEntitySchema)
 	t.Run("api_keys", testAPIKeySchema)
 	t.Run("providers", testProviderSchema)
+	t.Run("k8s_pools", testK8sPoolSchema)
 	t.Run("clusters", testClusterSchema)
 	t.Run("certificates", testCertificateSchema)
 	t.Run("auth", testAuthSchema)
@@ -341,6 +342,30 @@ func testProviderSchema(t *testing.T) {
 		testutil.DeleteProvider(providerName)
 		testutil.DeleteProvider(anthropicProviderName)
 	})
+}
+
+func testK8sPoolSchema(t *testing.T) {
+	poolName := testutil.UniqueName("schema-pool")
+	t.Cleanup(func() {
+		testutil.GetClient().Delete("/inner-api/v1/k8s_pools/" + poolName)
+	})
+
+	putResp, err := testutil.GetClient().Put("/inner-api/v1/k8s_pools/"+poolName+"/instances", []interface{}{
+		map[string]interface{}{"addr": "10.0.0.1", "port": 8000, "weight": 100},
+		map[string]interface{}{"addr": "10.0.0.2", "port": 8000, "weight": 50},
+	})
+	require.NoError(t, err)
+	testutil.AssertSuccess(t, putResp)
+
+	listResp, err := testutil.GetClient().Get("/open-api/v1/k8s_pools")
+	require.NoError(t, err)
+	testutil.AssertSuccess(t, listResp)
+	testutil.AssertSchema(t, listResp, K8sPoolListSchema)
+
+	oneResp, err := testutil.GetClient().Get("/open-api/v1/k8s_pools/" + poolName)
+	require.NoError(t, err)
+	testutil.AssertSuccess(t, oneResp)
+	testutil.AssertSchema(t, oneResp, K8sPoolEntrySchema)
 }
 
 // assertProviderModelProtocols 校验 Provider 响应中的 model_protocols 字段值。
@@ -1576,7 +1601,6 @@ func testBatchSchema(t *testing.T) {
 	_, hasBatchFiles := mustUnmarshalMap(t, bareResp.Data)["batch_files"]
 	assert.False(t, hasBatchFiles, "batch_files must be omitted when no associated files")
 }
-
 
 // ---------- security/reencrypt-sweeps ----------
 

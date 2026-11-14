@@ -26,14 +26,16 @@ import (
 type EntityTypeManager struct {
 	txn                 itxn.TxnStorager
 	storager            EntityTypeStorager
+	entityStorager      EntityStorager
 	operationLogManager ioperlog.OperationLogRecorder
 }
 
 // NewEntityTypeManager 创建 Entity 类型管理器
-func NewEntityTypeManager(txn itxn.TxnStorager, storager EntityTypeStorager) *EntityTypeManager {
+func NewEntityTypeManager(txn itxn.TxnStorager, storager EntityTypeStorager, entityStorager EntityStorager) *EntityTypeManager {
 	return &EntityTypeManager{
-		txn:      txn,
-		storager: storager,
+		txn:            txn,
+		storager:       storager,
+		entityStorager: entityStorager,
 	}
 }
 
@@ -94,6 +96,19 @@ func (m *EntityTypeManager) UpdateEntityType(ctx context.Context, filter *Entity
 		return 0, err
 	}
 
+	if param.Level != nil && (*param.Level < 1 || *param.Level > 5) {
+		err := xerror.WrapParamErrorWithMsg("level must be between 1 and 5")
+		m.recordEntityTypeOperation(ctx, string(ioperlog.ActionUpdate), param, entityTypeParamToMap(param), nil, err)
+		return 0, err
+	}
+
+	if param.Level != nil && (oldEntityType.Level == nil || *param.Level != *oldEntityType.Level) {
+		if err := m.checkLevelChangeConsistency(ctx, *oldEntityType.TypeName, *param.Level); err != nil {
+			m.recordEntityTypeOperation(ctx, string(ioperlog.ActionUpdate), param, entityTypeParamToMap(oldEntityType), nil, err)
+			return 0, err
+		}
+	}
+
 	affected, err := m.storager.UpdateEntityType(ctx, filter, param)
 	if err != nil {
 		m.recordEntityTypeOperation(ctx, string(ioperlog.ActionUpdate), oldEntityType, entityTypeParamToMap(oldEntityType), entityTypeParamToMap(param), err)
@@ -128,5 +143,96 @@ func (m *EntityTypeManager) DeleteEntityType(ctx context.Context, filter *Entity
 	}
 
 	m.recordEntityTypeOperation(ctx, string(ioperlog.ActionDelete), oldEntityType, entityTypeParamToMap(oldEntityType), nil, nil)
+	return nil
+}
+
+// checkLevelChangeConsistency rejects a level change that would leave existing
+// entity parent/child relations violating the hierarchy rule: the parent
+// entity-type level must be strictly less than the child entity-type level
+// (entities.md §2.1/§2.5). It checks relations in both directions for every
+// entity of the type being changed — as a child (its parent's type level must
+// be < newLevel) and as a parent (each child's type level must be > newLevel).
+// Any violation yields a 409 Conflict and the update makes no writes
+// (issue #313). A nil entityStorager disables the check (tests).
+func (m *EntityTypeManager) checkLevelChangeConsistency(ctx context.Context, typeName string, newLevel int) error {
+	if m.entityStorager == nil {
+		return nil
+	}
+
+	entities, err := m.entityStorager.FetchEntityList(ctx, &EntityFilter{Type: &typeName})
+	if err != nil {
+		return err
+	}
+	if len(entities) == 0 {
+		return nil
+	}
+
+	violations := 0
+	typeLevelCache := map[string]*int{}
+	typeLevelOf := func(tn string) (*int, error) {
+		if l, ok := typeLevelCache[tn]; ok {
+			return l, nil
+		}
+		t, err := m.storager.FetchEntityType(ctx, &EntityTypeFilter{TypeName: &tn})
+		if err != nil {
+			return nil, err
+		}
+		var l *int
+		if t != nil {
+			l = t.Level
+		}
+		typeLevelCache[tn] = l
+		return l, nil
+	}
+
+	// As a child: the parent's type level must be strictly less than newLevel.
+	for _, e := range entities {
+		if e == nil || e.ParentID == nil || *e.ParentID == "" {
+			continue
+		}
+		parent, err := m.entityStorager.FetchEntity(ctx, &EntityFilter{EntityID: e.ParentID})
+		if err != nil {
+			return err
+		}
+		if parent == nil || parent.Type == nil || *parent.Type == "" {
+			violations++
+			continue
+		}
+		pl, err := typeLevelOf(*parent.Type)
+		if err != nil {
+			return err
+		}
+		if pl == nil || *pl >= newLevel {
+			violations++
+		}
+	}
+
+	// As a parent: each child's type level must be strictly greater than newLevel.
+	for _, e := range entities {
+		if e == nil || e.EntityID == nil {
+			continue
+		}
+		children, err := m.entityStorager.FetchEntityList(ctx, &EntityFilter{ParentID: e.EntityID})
+		if err != nil {
+			return err
+		}
+		for _, c := range children {
+			if c == nil || c.Type == nil || *c.Type == "" {
+				violations++
+				continue
+			}
+			cl, err := typeLevelOf(*c.Type)
+			if err != nil {
+				return err
+			}
+			if cl == nil || *cl <= newLevel {
+				violations++
+			}
+		}
+	}
+
+	if violations > 0 {
+		return xerror.WrapConflictErrorWithMsg("level change rejected: %d existing entity relation(s) would violate the parent/child level constraint", violations)
+	}
 	return nil
 }

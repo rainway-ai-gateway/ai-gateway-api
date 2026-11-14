@@ -599,22 +599,26 @@ func (m *EntityManager) populateAssociatedData(ctx context.Context, one *EntityP
 const unlimitedSentinel = float64(100000000)
 
 // fillQuotaBalance 根据 Redis 实时剩余量填充 quotaPlan.Balance。
+// remaining 可为负（issue #1476：BFE 全额扣减，欠费保留在余额中）：
+// used = quota - remaining 如实反映实际消耗、允许大于 quota；
+// 对外展示的 Remaining 钳 0。
 func fillQuotaBalance(quotaPlan *shared.QuotaPlanParam, remaining float64) {
 	if quotaPlan == nil || quotaPlan.Quota == nil {
 		return
 	}
-	if remaining < 0 {
-		remaining = 0
-	}
 	used := *quotaPlan.Quota - remaining
 	if used < 0 {
-		used = 0
+		used = 0 // 防御：数据异常（remaining > quota）时兜底
+	}
+	displayRemaining := remaining
+	if displayRemaining < 0 {
+		displayRemaining = 0
 	}
 	if quotaPlan.Balance == nil {
 		quotaPlan.Balance = &shared.BalanceSummary{}
 	}
 	quotaPlan.Balance.Used = &used
-	quotaPlan.Balance.Remaining = &remaining
+	quotaPlan.Balance.Remaining = &displayRemaining
 }
 
 // fillUnlimitedQuotaBalance 为无限配额填充 sentinel 余额（used=0, remaining=100000000）。

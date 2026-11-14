@@ -509,6 +509,19 @@ func (f *fakeQuotaBalanceStorager) DeleteQuotaBalance(ctx context.Context, quota
 
 var fixedTestTime = time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 
+// fakeK8sPoolInstanceReader implements iprovider.K8sPoolInstanceReader for
+// the realtime-resolution export path.
+type fakeK8sPoolInstanceReader struct {
+	instances []iprovider.ProviderInstance
+	err       error
+	calls     int
+}
+
+func (f *fakeK8sPoolInstanceReader) FetchK8sPoolInstances(ctx context.Context, poolName string) ([]iprovider.ProviderInstance, error) {
+	f.calls++
+	return f.instances, f.err
+}
+
 type fakeEPPAssignmentResolver struct {
 	endpointsFn func(ctx context.Context, clusterName string) ([]string, bool, error)
 }

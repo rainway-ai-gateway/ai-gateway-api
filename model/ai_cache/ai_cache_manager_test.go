@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/rainway-ai-gateway/ai-gateway-api/lib"
+	"github.com/rainway-ai-gateway/ai-gateway-api/lib/xerror"
 	"github.com/rainway-ai-gateway/ai-gateway-api/model/ioperlog"
 	"github.com/rainway-ai-gateway/ai-gateway-api/model/iversion_control"
 	"github.com/rainway-ai-gateway/ai-gateway-api/model/shared"
@@ -181,6 +182,32 @@ func TestAICacheManager_SetAICacheRules(t *testing.T) {
 		assert.Equal(t, string(ioperlog.ResourceTypeAICacheRule), entry.ResourceType)
 		assert.Equal(t, ioperlog.StatusFailed, entry.Status)
 		assert.NotEmpty(t, entry.ErrorMsg)
+	})
+
+	t.Run("deadlock retries then surfaces a 409 conflict", func(t *testing.T) {
+		recorder := &fakeOperationLogRecorder{}
+		store := &fakeAICacheRuleStorager{
+			replaceAllFn: func(ctx context.Context, rules []*AICacheRuleParam) error {
+				return errors.New("Error 1213 (40001): Deadlock found when trying to get lock; try restarting transaction")
+			},
+		}
+		m := NewAICacheManager(&fakeTxn{}, store, &fakeAICacheSemanticSettingsStorager{}, nil, "AI_product")
+		m.SetOperationLogManager(recorder)
+
+		_, err := m.SetAICacheRules(ctx, &shared.AICacheRulesParam{
+			Rules: []*shared.AICacheRuleParam{sharedRule("r1", "default_t()")},
+		})
+		require.Error(t, err)
+
+		// The replacement is retried and never surfaces as a database error.
+		assert.Len(t, store.replaceAllCalls, 3)
+		rr := xerror.Resolve(err)
+		assert.Equal(t, 409, rr.ErrNo)
+		assert.Equal(t, "Conflict", rr.Type)
+
+		// Only the final outcome is audited, not each retry.
+		require.Len(t, recorder.entries, 1)
+		assert.Equal(t, ioperlog.StatusFailed, recorder.entries[0].Status)
 	})
 
 	t.Run("records successful audit with collection snapshots", func(t *testing.T) {

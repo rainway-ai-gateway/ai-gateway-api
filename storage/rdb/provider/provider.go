@@ -196,15 +196,6 @@ func toDAOParam(param *iprovider.ProviderParam) (*dao.TProviderParam, error) {
 	if err != nil {
 		return nil, err
 	}
-	// k8s_instance_pool is read-only for API callers and therefore always nil
-	// here; persist an explicit empty array for the default mode.
-	k8sInstancePool, err := marshalJSONPtr(param.K8sInstancePool)
-	if err != nil {
-		return nil, err
-	}
-	if k8sInstancePool == nil {
-		k8sInstancePool = lib.PString("[]")
-	}
 	modelProtocols, err := marshalJSON(param.ModelProtocols)
 	if err != nil {
 		return nil, err
@@ -219,19 +210,18 @@ func toDAOParam(param *iprovider.ProviderParam) (*dao.TProviderParam, error) {
 	}
 
 	return &dao.TProviderParam{
-		Name:            param.Name,
-		Description:     param.Description,
-		ModelEndpoint:   modelEndpoint,
-		Models:          models,
-		Keys:            keys,
-		InstancePool:    instancePool,
-		InstanceSource:  param.InstanceSource,
-		K8sPoolName:     param.K8sPoolName,
-		K8sInstancePool: k8sInstancePool,
-		ModelProtocols:  modelProtocols,
-		ProtocolPaths:   protocolPaths,
-		TimeZone:        param.TimeZone,
-		Tiers:           tiers,
+		Name:           param.Name,
+		Description:    param.Description,
+		ModelEndpoint:  modelEndpoint,
+		Models:         models,
+		Keys:           keys,
+		InstancePool:   instancePool,
+		InstanceSource: param.InstanceSource,
+		K8sPoolName:    param.K8sPoolName,
+		ModelProtocols: modelProtocols,
+		ProtocolPaths:  protocolPaths,
+		TimeZone:       param.TimeZone,
+		Tiers:          tiers,
 	}, nil
 }
 
@@ -276,11 +266,6 @@ func fromDAO(one *dao.TProvider) (*iprovider.Provider, error) {
 		instanceSource = iprovider.InstanceSourceInstancePool
 	}
 
-	k8sInstancePool := unmarshalInstancePool(one.K8sInstancePool)
-	if k8sInstancePool == nil {
-		k8sInstancePool = []iprovider.ProviderInstance{}
-	}
-
 	var k8sPoolName *string
 	if one.K8sPoolName != "" {
 		k8sPoolName = &one.K8sPoolName
@@ -295,22 +280,21 @@ func fromDAO(one *dao.TProvider) (*iprovider.Provider, error) {
 	}
 
 	return &iprovider.Provider{
-		ID:              one.ID,
-		Name:            one.Name,
-		Description:     one.Description,
-		ModelEndpoint:   unmarshalEndpoint(one.ModelEndpoint),
-		Models:          unmarshalStringSlice(one.Models),
-		Keys:            keys,
-		InstancePool:    unmarshalInstancePool(one.InstancePool),
-		InstanceSource:  instanceSource,
-		K8sPoolName:     k8sPoolName,
-		K8sInstancePool: k8sInstancePool,
-		ModelProtocols:  unmarshalStringSlice(one.ModelProtocols),
-		ProtocolPaths:   unmarshalStringMap(one.ProtocolPaths),
-		TimeZone:        timeZone,
-		Tiers:           tiers,
-		CreateTime:      createTime,
-		UpdateTime:      updateTime,
+		ID:             one.ID,
+		Name:           one.Name,
+		Description:    one.Description,
+		ModelEndpoint:  unmarshalEndpoint(one.ModelEndpoint),
+		Models:         unmarshalStringSlice(one.Models),
+		Keys:           keys,
+		InstancePool:   unmarshalInstancePool(one.InstancePool),
+		InstanceSource: instanceSource,
+		K8sPoolName:    k8sPoolName,
+		ModelProtocols: unmarshalStringSlice(one.ModelProtocols),
+		ProtocolPaths:  unmarshalStringMap(one.ProtocolPaths),
+		TimeZone:       timeZone,
+		Tiers:          tiers,
+		CreateTime:     createTime,
+		UpdateTime:     updateTime,
 	}, nil
 }
 
@@ -342,13 +326,6 @@ func toDAOParamForUpdate(param *iprovider.ProviderParam) (*dao.TProviderParam, e
 	if err != nil {
 		return nil, err
 	}
-	// A non-nil K8sInstancePool (including a pointer to an empty slice) is
-	// marshaled and written, so mirror clearing stores "[]"; nil keeps the
-	// stored value (DAO nil-skip).
-	k8sInstancePool, err := marshalJSONPtr(param.K8sInstancePool)
-	if err != nil {
-		return nil, err
-	}
 	modelProtocols, err := marshalJSONPtr(param.ModelProtocols)
 	if err != nil {
 		return nil, err
@@ -363,19 +340,18 @@ func toDAOParamForUpdate(param *iprovider.ProviderParam) (*dao.TProviderParam, e
 	}
 
 	return &dao.TProviderParam{
-		Name:            param.Name,
-		Description:     param.Description,
-		ModelEndpoint:   modelEndpoint,
-		Models:          models,
-		Keys:            keys,
-		InstancePool:    instancePool,
-		InstanceSource:  param.InstanceSource,
-		K8sPoolName:     param.K8sPoolName,
-		K8sInstancePool: k8sInstancePool,
-		ModelProtocols:  modelProtocols,
-		ProtocolPaths:   protocolPaths,
-		TimeZone:        param.TimeZone,
-		Tiers:           tiers,
+		Name:           param.Name,
+		Description:    param.Description,
+		ModelEndpoint:  modelEndpoint,
+		Models:         models,
+		Keys:           keys,
+		InstancePool:   instancePool,
+		InstanceSource: param.InstanceSource,
+		K8sPoolName:    param.K8sPoolName,
+		ModelProtocols: modelProtocols,
+		ProtocolPaths:  protocolPaths,
+		TimeZone:       param.TimeZone,
+		Tiers:          tiers,
 	}, nil
 }
 

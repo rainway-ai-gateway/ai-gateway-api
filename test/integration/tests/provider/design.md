@@ -1546,30 +1546,34 @@ tiers:
 | 接口名称 | K8s 实例池维护（k8s-pools.md） |
 | 方法 | PUT/GET/DELETE |
 | 路径 | `/inner-api/v1/k8s_pools/{name}/instances`、`/inner-api/v1/k8s_pools/{name}`、`/inner-api/v1/k8s_pools` |
-| 说明 | 发现组件唯一写入通道；provider（`instance_source=k8s_pool`）侧 `k8s_instance_pool` 为只读镜像 |
+| 说明 | 发现组件唯一写入通道；`k8s_pools` 是 k8s 来源实例的唯一事实源，provider 只保存 `k8s_pool_name` 引用，导出/batch 消费时实时解析（无镜像、无 fan-out） |
 
 ### 18.2 测试用例
 
 | 用例编号 | 用例名称 | 预期结果 |
 |----------|----------|----------|
-| KP-1-001 | 端到端全链路：PUT pool → 建 k8s_pool provider → 镜像出现 → cluster 引用 → 导出含实例 → 再 PUT 增删实例 → 导出跟随 → DELETE pool → 镜像清空、导出空条目 | 全链路 200/404 断言成立 |
+| KP-1-001 | 端到端全链路（bug 回归）：PUT pool → 建 k8s_pool provider → 建 cluster（**不再 PUT pool**）→ 导出立即含实例 → 再 PUT 增删实例 → 导出跟随 → DELETE 被引用 pool → 保留行且 `instance_count=0`、导出空条目 | 全链路 200/404 断言成立 |
+| KP-1-002 | 顺序反转：先建 provider/cluster（空）→ 首次 PUT pool → 导出立即跟随（无 fan-out 回填） | 导出出现 backend |
+| KP-1-003 | cluster PATCH 不清空：k8s provider + 非空 pool → PATCH cluster → 导出仍有实例 | backend 保留 |
+| KP-1-004 | provider 模式切换：instance_pool → k8s_pool 导出切到 pool；k8s_pool → instance_pool 导出切回手工池 | 导出前后形态正确 |
 | KP-2-001 | 查询全部 pool 列表 | 200，`list` 含条目及 `instance_count`/`last_sync_time` |
 | KP-3-001 | 参数校验：非法 pool 名、重复 addr/port、weight/port 越界、缺 addr | 422 |
 | KP-3-002 | 查询/删除不存在的 pool | 404 |
-| KP-4-001 | OpenAPI：k8s_instance_pool 只读 422、非法 instance_source 422、k8s_pool 模式缺 k8s_pool_name 422 | 422 |
-| KP-4-002 | 模式切回 instance_pool 恢复休眠 instance_pool 与 k8s_pool_name | 200，字段休眠保留 |
-| KP-5-001 | 删除被引用 pool（无引用保护） | 200，引用者镜像清空 |
-| KP-6-001 | /k8s_pools ↔ /providers 联动（N:1）：同一 pool 供多 provider 引用，一次 PUT 全部镜像填充、互不影响；DELETE 全部清空且不影响其他 pool 的引用者 | 镜像跟随各自 pool 的 PUT/DELETE，字段值精确匹配 |
-| KP-6-002 | PUT 空实例列表清空镜像（不删 pool） | 200，镜像清空，pool `instance_count=0` 仍在 |
-| KP-6-003 | 模式切换脱离/恢复联动：k8s_pool → instance_pool 切换后镜像清空且 pool PUT 不再到达；切回 k8s_pool 后下一次 PUT 镜像恢复跟随 | 切换后镜像 `[]`，脱离期间 PUT 无效，恢复后镜像跟随 |
+| KP-4-001 | OpenAPI：请求携带已删除的 `k8s_instance_pool` 被静默忽略（provider 正常创建、响应无该字段）、非法 instance_source 422、k8s_pool 模式缺 k8s_pool_name 422 | 200 无镜像字段；422 |
+| KP-4-002 | 模式切回 instance_pool 恢复休眠 instance_pool 与 k8s_pool_name；响应不含 `k8s_instance_pool` | 200，字段休眠保留 |
+| KP-5-001 | 删除未被引用 pool | 200，GET 404 |
+| KP-5-002 | 删除被引用 pool（保留行 + 清空实例） | 200，GET 200 + `instance_count=0`，导出空条目 |
+| KP-6-001 | 引用不存在的 pool（池不存在 ≡ 零实例） | 导出空条目，不报错 |
+| KP-6-002 | PUT 空实例列表（不删 pool） | 200，`instance_count=0`，导出空条目 |
+| KP-6-003 | 版本 bump：pool PUT 前后 cluster_table `Version` 必须变化 | Version 变化 |
 | KP-7-001 | 4xx 回读零变更：PATCH 非法 k8s_pool_name → 422 → provider 的 k8s_pool_name 与 instance_pool 逐字段不变 | 422，读回与操作前一致 |
-| KP-7-002 | 4xx 回读零变更：创建携带只读 k8s_instance_pool → 422 → GET provider 404（未留下半成品资源） | 422，GET 404 |
-| KP-7-003 | 4xx 回读零变更：PATCH 切 k8s_pool 模式缺 k8s_pool_name → 422 → instance_source 与镜像不变 | 422，读回与操作前一致 |
-| KP-7-004 | 4xx 回读零变更 + 防泄漏：已存在 pool 上非法 PUT → 422 → pool、provider 镜像、cluster_table 导出逐字段不变（非法实例不得出现在导出产物） | 422，三方读回不变 |
-| KP-7-005 | PATCH 省略矩阵（k8s 模式）：PATCH 只改 description（合同必填字段照常携带）→ models/keys/休眠 instance_pool/k8s_pool_name/镜像均未提交字段原值不变 | 200，未提交字段全保留 |
+| KP-7-002 | 已删除字段静默忽略：创建携带 `k8s_instance_pool` → 200 创建成功且响应无该字段 | 200 无镜像字段 |
+| KP-7-003 | 4xx 回读零变更：PATCH 切 k8s_pool 模式缺 k8s_pool_name → 422 → instance_source 不变 | 422，读回与操作前一致 |
+| KP-7-004 | 4xx 回读零变更 + 防泄漏：已存在 pool 上非法 PUT → 422 → pool、cluster_table 导出逐字段不变（非法实例不得出现在导出产物） | 422，读回不变 |
+| KP-7-005 | PATCH 省略矩阵（k8s 模式）：PATCH 只改 description（合同必填字段照常携带）→ models/keys/休眠 instance_pool/k8s_pool_name 均未提交字段原值不变 | 200，未提交字段全保留 |
 | KP-7-006 | 省略 vs 显式空对照：切回 instance_pool 时显式 `instance_pool: []` → 422 且休眠池原值保留；携带休眠池原值提交 → 200 且休眠池恢复生效、k8s_pool_name 休眠保留 | 前者 422，后者 200 |
 | KP-7-007 | 审计：模式切换 PATCH 产生 provider update 日志，`diff_keys` 精确等于实际变更字段（ElementsMatch，禁止 Contains） | diff_keys = [instance_source, k8s_pool_name] |
 
-> 说明：k8s_pool 模式 provider 创建后，其 `k8s_instance_pool` 镜像在下一次 pool PUT 的 fan-out 时才填充（"池不存在 ≡ 零实例"）；端到端用例中通过再次 PUT 同一实例列表触发镜像出现。
+> 说明：k8s 模式不再维护 provider 镜像（`k8s_instance_pool` 字段已删除），provider 响应只含 `k8s_pool_name` 引用；`cluster_table` 在每次导出时按 `k8s_pool_name` 实时查询 `k8s_pools`，池不存在等价于零实例。
 >
-> KP-6-003 依赖切换时点行为：provider 切换到 `instance_pool` 模式时系统强制清空只读镜像（契约约定该模式下 `k8s_instance_pool` 恒为空数组），镜像刷新始终专属 `/k8s_pools` 写入通道。
+> 手动来源（`instance_source=instance_pool`）的实例池同步链路与用例保持原样；manual → k8s 模式切换会清空派生池中的旧手工快照（占位不变量）。

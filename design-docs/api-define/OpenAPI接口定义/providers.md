@@ -30,7 +30,6 @@
         }
     ],
     "k8s_pool_name": null,
-    "k8s_instance_pool": [],
     "model_protocols": ["openai"],
     "protocol_paths": {"openai": "/v1"},
     "time_zone": "Asia/Shanghai",
@@ -48,21 +47,20 @@
 }
 ```
 
-> 上例为 `instance_source=instance_pool`（默认）形态：`k8s_pool_name` 为 `null`、`k8s_instance_pool` 为空数组。`instance_source=k8s_pool` 形态见下方[模式响应示例](#instance_sourcek8s_pool-模式响应示例)——此时 `instance_pool` 休眠保留（可为 `[]`），`k8s_pool_name` / `k8s_instance_pool` 由系统填充。
+> 上例为 `instance_source=instance_pool`（默认）形态：`k8s_pool_name` 为 `null`。`instance_source=k8s_pool` 形态见下方[模式响应示例](#instance_sourcek8s_pool-模式响应示例)——此时 `instance_pool` 休眠保留（可为 `[]`），`k8s_pool_name` 由用户填写；响应中不返回任何 K8s 实例数据（实时实例经 `GET /open-api/v1/k8s_pools/{k8s_pool_name}` 查询）。
 
 **字段说明**
 
 | 字段 | 类型 | 说明 | 可能取值 | 合法性条件 |
 |------|------|------|----------|----------|
 | `name` | string | Provider 唯一标识 | 全局唯一 | 必填；类型为 [ProviderName](./00-common.md#17-provider-名称providername)；合法命名参考 [ClusterName](./00-common.md#15-集群名称clustername) |
-| `description` | string | Provider 描述信息 | - | 非必填；若传入，长度 0-256 字符；不能包含控制字符 |
+| `description` | string | Provider 描述信息 | - | 非必填；若传入，长度 0-256 字节（按 UTF-8 字节计）；不能包含控制字符 |
 | `model_endpoint` | object | 模型发现端点 | 用于调用第三方 AI 模型提供商的模型列表接口 | 非必填；未设置时默认 `schema=https`、`uri=/v1/models`；具体字段见下方 表：Endpoint |
 | `models` | []string | 该 provider 支持的模型列表 | - | 必填；至少 1 个元素；元素非空且不可重复 |
 | `keys` | []ProviderKey | 该 provider 可用的 API Key 明文 | - | 非必填；默认空数组 `[]`；元素须满足 表：ProviderKey 结构 |
 | `instance_source` | string | 实例供给方式 | 枚举：`instance_pool`、`k8s_pool` | 非必填；默认 `instance_pool`；`instance_pool` = 人维护 `instance_pool`；`k8s_pool` = 实例由 K8s 发现组件经 InnerAPI `/k8s_pools` 维护 |
 | `instance_pool` | []Instance | Provider 对应的后端实例池 | 系统自动据此创建实例池和子集群 | `instance_source=instance_pool` 时必填：至少 1 个元素；同一 provider 内 `(addr, port)` 组合不能重复；至少有一个实例 `weight > 0`；`instance_source=k8s_pool` 时不参与有效池、不做成员数校验（休眠保留，切回 `instance_pool` 模式时自动恢复生效，作为人工兜底） |
-| `k8s_pool_name` | string | 引用的 K8s 实例池名称 | 引用 `/k8s_pools` 中的条目 | 非必填；`instance_source=k8s_pool` 时必填；`instance_source=instance_pool` 时保留原值但不生效（休眠，切回 `k8s_pool` 模式时自动恢复生效）；普通名称校验（长度 1-64 字符，仅允许字母、数字、`_`、`-`、`.`，不能以 `.`、`-`、`_` 开头或结尾，不能包含空白字符）；与 K8s Service 名无耦合（Service→池名映射由发现组件自行约定）；引用的 pool 无需预先存在（池不存在 ≡ 零实例） |
-| `k8s_instance_pool` | []Instance | K8s 实例池只读镜像 | 系统从 `/k8s_pools` 同步 | **只读**；请求体中携带返回 422；元素结构与 表：Instance 相同；`instance_source=instance_pool` 时为空数组 `[]` |
+| `k8s_pool_name` | string | 引用的 K8s 实例池名称 | 引用 `/k8s_pools` 中的条目 | 非必填；`instance_source=k8s_pool` 时必填；`instance_source=instance_pool` 时保留原值但不生效（休眠，切回 `k8s_pool` 模式时自动恢复生效）；普通名称校验（长度 1-128 字符，仅允许字母、数字、`_`、`-`、`.`，不能以 `.`、`-`、`_` 开头或结尾，不能包含空白字符）；与 K8s Service 名无耦合（Service→池名映射由发现组件自行约定）；引用的 pool 无需预先存在（池不存在 ≡ 零实例）；`k8s_pools` 是该实例集合的唯一事实源，provider 上不存储实例数据，消费方（导出/batch）按此名称实时解析 |
 | `model_protocols` | []string | 支持的模型访问协议 | 枚举：`openai`、`anthropic`、`gemini` | 必填；至少 1 个元素；元素不可重复；枚举值见下方 |
 | `protocol_paths` | map[string]string | 按协议的上游 API 基路径（该协议 SDK `base_url` 的 path 部分）；BFE 转发时将命中的标准端点改写到该基路径（openai 兼容带/不带 `/v1` 的客户端入口） | 键：`openai`、`anthropic` | 非必填；缺省 = 不改写（请求路径原样转发）；键必须是 `model_protocols` 已声明协议的子集；值须以 `/` 开头、不以 `/` 结尾、不含 `..`/`?`/`#`、长度 ≤ 128；语义与参考值见下方 |
 | `time_zone` | string | 计算时段所使用的时区 | 用于 tier 价格匹配 | 非必填；默认 `Asia/Shanghai`；须为合法 IANA 时区名 |
@@ -114,19 +112,18 @@
 | weight | int | 实例权重，范围 [0,100] | Y | | 必填；取值范围 [0,100]；`0` 表示该实例不接收流量 |
 | port | int | 实例端口 | Y | | 必填；类型为 [Port](./00-common.md#3-网络端口port) |
 
-> `k8s_instance_pool` 的元素复用本结构（`instance_source=k8s_pool` 时由系统写入，`weight` 缺省 100）。
-
 **有效池（effective pool）**
 
-provider 对下游（cluster 引用快照、实例池同步、配置导出）暴露的实例集合称为**有效池**：
+provider 对下游（cluster 引用快照、实例池同步、配置导出、batch 出网）暴露的实例集合称为**有效池**：
 
 ```
-有效池 = instance_source == "k8s_pool" ? k8s_instance_pool : instance_pool
+有效池 = instance_source == "k8s_pool" ? 实时查询 k8s_pools[k8s_pool_name].instances : instance_pool
 ```
 
 - `instance_source=instance_pool`：有效池即 `instance_pool`（现状行为）。
-- `instance_source=k8s_pool`：有效池即系统维护的 `k8s_instance_pool` 镜像；`instance_pool` 休眠保留但不生效。
-- 有效池内容变化（含变为空）时，系统自动同步更新引用该 provider 的所有 cluster 所生成的实例池；有效池为空时，引用 cluster 以空条目下发，该 cluster 请求将返回 500（`BK_NO_BACKEND`），须配合告警使用。
+- `instance_source=k8s_pool`：有效池 = 消费时按 `k8s_pool_name` 实时查询 `k8s_pools`（`k8s_pools` 是唯一事实源，provider 上不存实例数据）；`instance_pool` 休眠保留但不生效。
+- k8s 模式下没有任何镜像同步：`PUT/DELETE /k8s_pools` 只写 `k8s_pools` 单表，下一次导出/batch 即时反映；cluster 派生池在 k8s 模式下为空占位行（仅满足 schema 引用，不承载实例数据）。
+- 有效池为空时（池不存在 / 池名为空 / 池为空），引用 cluster 以空条目下发，该 cluster 请求将返回 500（`BK_NO_BACKEND`），须配合告警使用；手工来源的有效池变化仍会同步更新引用 cluster 的派生实例池。
 
 **`instance_source=k8s_pool` 模式响应示例**
 
@@ -137,16 +134,14 @@ provider 对下游（cluster 引用快照、实例池同步、配置导出）暴
     "instance_source": "k8s_pool",
     "k8s_pool_name": "svc-a",
     "instance_pool": [],
-    "k8s_instance_pool": [
-        {"addr": "10.0.0.1", "port": 8000, "weight": 100},
-        {"addr": "10.0.0.2", "port": 8000, "weight": 100}
-    ],
     "models": ["deepseek-chat"],
     "model_protocols": ["openai"],
     "create_time": 1716883200,
     "update_time": 1716883200
 }
 ```
+
+> K8s pool 的实时实例列表可通过 `GET /open-api/v1/k8s_pools/{k8s_pool_name}` 查询（见 [k8s-pools.md](./k8s-pools.md)）；provider 详情页可按 `k8s_pool_name` 调用该接口展示实例。
 
 **`model_protocols` 枚举**
 
@@ -228,7 +223,7 @@ provider 对下游（cluster 引用快照、实例池同步、配置导出）暴
 1. 校验 `name` 全局唯一、`instance_source` 合法（缺省 `instance_pool`）、`instance_pool` 合法、`model_protocols` 合法、`protocol_paths` 合法（键 ⊆ `model_protocols` 且取值 ∈ {openai, anthropic}，值符合路径格式）。
    - `instance_source=instance_pool`：`instance_pool` 必填且至少 1 个元素；`k8s_pool_name` 若传入则保留（休眠，不生效）。
    - `instance_source=k8s_pool`：`k8s_pool_name` 必填；`instance_pool` 不参与有效池、不做成员数校验（可传空）。
-   - 任意模式：请求体携带 `k8s_instance_pool` 返回 422（只读字段）。
+   - 任意模式：请求体携带已删除的 `k8s_instance_pool` 字段被静默忽略（按未知字段处理）。
 2. 若未传 `model_endpoint`，使用默认值 `{schema: "https", uri: "/v1/models"}`。
 3. 若未传 `keys`，默认空数组。
 4. 若未传 `time_zone`，默认 `Asia/Shanghai`。
@@ -398,15 +393,16 @@ provider 对下游（cluster 引用快照、实例池同步、配置导出）暴
 可修改字段含义同创建接口，但**输入参数不包括 `name`，即不能修改 provider 的 name**（名称由 URI 中的 `provider_name` 指定）。若请求体中仍包含 `name`，返回 422。若传入 `instance_pool` 字段（且 `instance_source=instance_pool`），系统会自动同步更新被引用该 provider 的所有 cluster 所生成的实例池。
 
 > **实例供给方式（`instance_source` / `k8s_pool_name`）更新语义**：
-> - 两字段均可通过 PATCH 修改，包括**模式切换**（`instance_pool` ↔ `k8s_pool`）；切换后有效池随之变化，经同步链路自动更新引用 cluster 的派生实例池（空有效池同样同步清空）。
+> - 两字段均可通过 PATCH 修改，包括**模式切换**（`instance_pool` ↔ `k8s_pool`）；模式切换时清空/写入引用 cluster 的派生实例池快照以维持占位不变量（manual → k8s 清空旧手工快照；k8s → manual 写入新 `instance_pool` 快照）。
 > - 模式切换时点校验：`instance_source=instance_pool` 要求 `instance_pool` 非空；`instance_source=k8s_pool` 要求 `k8s_pool_name` 非空。不满足返回 422。
-> - `instance_source=k8s_pool` 时 PATCH `instance_pool` 仅作休眠保留（不参与有效池、不触发同步），切回 `instance_pool` 模式时自动恢复生效。
-> - `k8s_instance_pool` 为只读镜像，请求体携带返回 422；其内容由系统根据 `/k8s_pools` 的变更自动刷新。
+> - `instance_source=k8s_pool` 时 PATCH `instance_pool` 仅作休眠保留（不参与有效池、不触发同步），切回 `instance_pool` 模式时自动恢复生效；PATCH `k8s_pool_name`（A→B）只改引用，不触发任何派生池同步，消费方实时读 B。
+> - 字段已彻底删除：请求体携带 `k8s_instance_pool` 被静默忽略（响应同样不含该字段）；k8s 模式的实时实例经 `GET /open-api/v1/k8s_pools/{k8s_pool_name}` 查询。
 
 > **注意**：本接口为**部分更新**语义——请求体中未提供的字段（`description`、`model_endpoint`、`models`、`keys`、`time_zone`、`tiers`、`instance_source`、`k8s_pool_name` 等）保持原值不变。
 > - 通用约定：对可选的 map / 数组字段（`keys`、`tiers`、`protocol_paths` 等），省略与传 `null` 等价，均保留原值；显式传入空集合（`[]` / `{}`）按全量替换处理，即清空该字段（仍须通过对应字段校验）。
 > - `keys` 作为数组，**显式提供时按全量替换**处理，即调用方需传入完整的最新 Key 列表；省略时保留原值。Key 的 `name` 删除/重命名会校验无 cluster 仍引用旧 name；若被引用，返回 `409 Conflict`。
 > - `models` 作为数组，**显式提供时按全量替换**处理；省略时保留原值。删除 model 会校验无 cluster 仍引用该 model；若被引用，返回 `409 Conflict`。
+> - `model_protocols` 作为数组，**显式提供时按全量替换**处理。收窄（移除协议）会校验无 cluster 的 `llm_config.ensure_reasoning_content` 仍引用被移除的协议；若被引用，返回 `409 Conflict`（消息含 provider 名、协议名与引用它的 cluster 名）。放宽不受限制。
 > - `tiers`、`time_zone`、`model_endpoint`：提供即更新，省略保留原值。`time_zone` 取值须为合法时区名（如 `Asia/Shanghai`、`UTC`）。
 > - `protocol_paths`：提供即全量替换，**省略或传 `null` 保留原值；清空（禁用路径改写）须显式传入 `"protocol_paths": {}`**。键必须是**更新后** `model_protocols` 已声明协议的子集——同时调整 `model_protocols` 与 `protocol_paths` 时，须在同一个请求中给出合法组合。
 
@@ -662,16 +658,16 @@ tiers:
 ## 3. 校验规则
 
 1. `name` 必填，类型为 [ProviderName](./00-common.md#17-provider-名称providername)，全局唯一。
-2. `description` 可选；若传入，长度 0-256 字符，不能包含控制字符。
+2. `description` 可选；若传入，长度 0-256 字节（按 UTF-8 字节计），不能包含控制字符。
 3. `instance_source` 非必填，缺省为 `instance_pool`；取值须为枚举值：`instance_pool`、`k8s_pool`。
 4. `instance_pool` 校验按 `instance_source` 条件化：
    - `instance_source=instance_pool`：必填，至少包含 1 个实例；同一 provider 内 `(addr, port)` 组合不能重复；至少有一个实例 `weight > 0`（PATCH 部分更新时省略 `instance_pool` 表示保留原值，不视为违反必填；显式提供时必须满足本条款）。
    - `instance_source=k8s_pool`：不参与有效池、不做成员数校验（休眠保留，切回 `instance_pool` 模式时自动恢复生效）。
 5. `k8s_pool_name` 校验按 `instance_source` 条件化：
-   - `instance_source=k8s_pool`：必填，长度 1-64 字符，仅允许字母、数字、`_`、`-`、`.`，不能以 `.`、`-`、`_` 开头或结尾，不能包含空白字符；引用的 pool 无需预先存在（池不存在 ≡ 零实例）。
+   - `instance_source=k8s_pool`：必填，长度 1-128 字符，仅允许字母、数字、`_`、`-`、`.`，不能以 `.`、`-`、`_` 开头或结尾，不能包含空白字符；引用的 pool 无需预先存在（池不存在 ≡ 零实例）。
    - `instance_source=instance_pool`：不参与有效池，传入时保留原值（休眠，切回 `k8s_pool` 模式时自动恢复生效）。
-6. `k8s_instance_pool` 为只读镜像：任意模式的请求体携带该字段均返回 422；其内容由系统根据 `/k8s_pools` 的变更自动刷新，`instance_source=instance_pool` 时为空数组 `[]`。
-7. 每个实例包含 `addr`、`weight`、`port`；`addr` 必填且类型为 [Hostname](./00-common.md#1-主机名hostname)；`weight` 取值范围 [0,100]；`port` 必填且类型为 [Port](./00-common.md#3-网络端口port)。`k8s_instance_pool` 元素复用同一结构（`weight` 缺省 100）。
+6. `k8s_instance_pool` 字段已彻底删除：响应中不返回；请求体携带该字段按未知字段静默忽略。
+7. 每个实例包含 `addr`、`weight`、`port`；`addr` 必填且类型为 [Hostname](./00-common.md#1-主机名hostname)；`weight` 取值范围 [0,100]；`port` 必填且类型为 [Port](./00-common.md#3-网络端口port)。
 8. `model_endpoint.schema` 有效值为 `http`、`https`，未设置时默认 `https`；`uri` 非空且须以 `/` 开头。
 9. `models` 必填，至少 1 个元素；元素非空且不可重复。（PATCH 部分更新时省略 `models` 表示保留原值，不视为违反必填；显式提供时必须满足本条款。）
 10. `keys` 非必填，默认空数组 `[]`；若非空：

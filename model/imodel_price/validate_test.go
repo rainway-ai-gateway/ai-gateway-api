@@ -15,6 +15,7 @@
 package imodel_price
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -316,4 +317,115 @@ func TestValidateModelPrice_BatchMode(t *testing.T) {
 	// file mode stays out of the price system.
 	p.Mode = "file"
 	assert.Error(t, ValidateModelPrice(p))
+}
+
+func TestValidateModelPrice_FieldLength(t *testing.T) {
+	longASCII := strings.Repeat("a", MaxModelPriceFieldLength+1)
+
+	cases := []struct {
+		name    string
+		param   *ModelPrice
+		wantErr bool
+	}{
+		{
+			name: "all fields at 255 boundary",
+			param: func() *ModelPrice {
+				p := validModelPrice()
+				p.Provider = strings.Repeat("a", MaxModelPriceFieldLength)
+				p.Model = strings.Repeat("b", MaxModelPriceFieldLength)
+				p.BaseModel = strings.Repeat("c", MaxModelPriceFieldLength)
+				return p
+			}(),
+			wantErr: false,
+		},
+		{
+			name: "provider 256",
+			param: func() *ModelPrice {
+				p := validModelPrice()
+				p.Provider = longASCII
+				return p
+			}(),
+			wantErr: true,
+		},
+		{
+			name: "model 256",
+			param: func() *ModelPrice {
+				p := validModelPrice()
+				p.Model = longASCII
+				return p
+			}(),
+			wantErr: true,
+		},
+		{
+			name: "base_model 256",
+			param: func() *ModelPrice {
+				p := validModelPrice()
+				p.BaseModel = longASCII
+				return p
+			}(),
+			wantErr: true,
+		},
+		{
+			// Length is counted in characters (runes): 255 CJK characters
+			// are within the limit even though they exceed 255 bytes
+			// (issue #309, matching VARCHAR(255) character semantics).
+			name: "255 CJK characters accepted",
+			param: func() *ModelPrice {
+				p := validModelPrice()
+				p.Model = strings.Repeat("模", MaxModelPriceFieldLength)
+				return p
+			}(),
+			wantErr: false,
+		},
+		{
+			name: "whitespace-only provider still rejected by non-empty check",
+			param: func() *ModelPrice {
+				p := validModelPrice()
+				p.Provider = " "
+				return p
+			}(),
+			wantErr: true,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := ValidateModelPrice(tc.param)
+			if tc.wantErr {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+
+	// Error messages name the offending field.
+	for field, mutate := range map[string]func(*ModelPrice){
+		"provider":  func(p *ModelPrice) { p.Provider = longASCII },
+		"model":     func(p *ModelPrice) { p.Model = longASCII },
+		"base_model": func(p *ModelPrice) { p.BaseModel = longASCII },
+	} {
+		p := validModelPrice()
+		mutate(p)
+		err := ValidateModelPrice(p)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), field)
+	}
+}
+
+func TestValidateImportFile_FieldLength(t *testing.T) {
+	file := &ModelListFile{
+		Version:         "v1.0",
+		DefaultCurrency: "RMB",
+		Models: []*ModelPrice{func() *ModelPrice {
+			p := validModelPrice()
+			p.Model = strings.Repeat("a", MaxModelPriceFieldLength+1)
+			return p
+		}()},
+	}
+	err := ValidateImportFile(file)
+	assert.Error(t, err)
+	// The import path wraps per-record errors with the record index.
+	assert.Contains(t, err.Error(), "models[0]")
+	assert.Contains(t, err.Error(), "model")
 }

@@ -198,7 +198,7 @@ func TestValidateClusterEppRuntime(t *testing.T) {
 		got, err := validateClusterEppRuntime(lib.PString(`{"timeout":{"connect":"1s"}}`))
 		require.NoError(t, err)
 		require.NotNil(t, got)
-		assert.JSONEq(t, `{"timeout":{"connect":"1s","call":"3s"}}`, *got)
+		assert.JSONEq(t, `{"timeout":{"connect":"1s","call":"11s"}}`, *got)
 	})
 
 	t.Run("full config normalized", func(t *testing.T) {
@@ -207,7 +207,7 @@ func TestValidateClusterEppRuntime(t *testing.T) {
 		require.NotNil(t, got)
 		assert.JSONEq(t, `{
 			"check":{"disabled":false,"check_interval":"2s","fail_threshold":5,"cooldown":"45s","success_threshold":2},
-			"timeout":{"connect":"500ms","call":"3s"}
+			"timeout":{"connect":"500ms","call":"11s"}
 		}`, *got)
 	})
 

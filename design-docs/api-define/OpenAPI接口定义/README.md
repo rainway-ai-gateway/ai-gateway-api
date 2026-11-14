@@ -25,6 +25,7 @@
 | /auth | [auth.md](./auth.md) |
 | /certificates | [certificates.md](./certificates.md) |
 | /providers | [providers.md](./providers.md) |
+| /k8s_pools | [k8s-pools.md](./k8s-pools.md) |
 | /clusters | [clusters.md](./clusters.md) |
 | /epp-assignments | [epp-assignments.md](./epp-assignments.md) |
 | /epp-pool | [epp-pool.md](./epp-pool.md) |

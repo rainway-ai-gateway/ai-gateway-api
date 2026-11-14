@@ -46,6 +46,14 @@ func (f *fakeK8sPoolStorager) FetchPool(ctx context.Context, name string) (*ik8s
 	return f.fetchFn(ctx, name)
 }
 
+func (f *fakeK8sPoolStorager) FetchK8sPoolInstances(ctx context.Context, name string) ([]iprovider.ProviderInstance, error) {
+	pool, err := f.fetchFn(ctx, name)
+	if err != nil || pool == nil {
+		return []iprovider.ProviderInstance{}, err
+	}
+	return pool.Instances, nil
+}
+
 func (f *fakeK8sPoolStorager) FetchPoolList(ctx context.Context) ([]*ik8s_pool.K8sPool, error) {
 	return f.fetchListFn(ctx)
 }
@@ -100,7 +108,7 @@ func swapManager(t *testing.T, poolStorager ik8s_pool.K8sPoolStorager) {
 			fetchListFn: func(ctx context.Context, filter *iprovider.ProviderFilter) ([]*iprovider.Provider, int64, error) {
 				return nil, 0, nil
 			},
-		}, nil)
+		})
 }
 
 func reqWithName(method, target, name, body string) *http.Request {
@@ -194,8 +202,8 @@ func TestGetPoolAction(t *testing.T) {
 				return nil, nil
 			}
 			return &ik8s_pool.K8sPool{
-				Name:      name,
-				Instances: []iprovider.ProviderInstance{{Addr: "10.0.0.1", Port: 8000, Weight: 100}},
+				Name:       name,
+				Instances:  []iprovider.ProviderInstance{{Addr: "10.0.0.1", Port: 8000, Weight: 100}},
 				UpdateTime: 1716883200,
 			}, nil
 		},

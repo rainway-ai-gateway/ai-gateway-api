@@ -24,7 +24,7 @@ CTXE 用例（`innerapi/ai_context/ai_context_test.go`）明细：CTXE-1-001 首
 | **合计** | **15** |
 
 > CTX-1-002 为表驱动用例，含 12 个负向子用例（mode 4 + cond 4 + 数值 2 + 重复 cond 1 + null 元素 1；mode 含大小写敏感子用例）。
-> CTX-1-005 为 `//go:build mysql` 并发用例（家族10），需 `AIAPI_MYSQL_DSN`，SQLite 环境不编译。
+> CTX-1-005 / CTX-1-006 为 `//go:build mysql` 并发用例（家族10），需 `AIAPI_MYSQL_DSN`，SQLite 环境不编译。
 
 ## 4. 认证方式
 
@@ -37,7 +37,8 @@ ai_context/
 ├── design.md
 ├── update/
 │   ├── update_test.go            # CTX-1-001 ~ CTX-1-004（PUT）
-│   └── concurrency_mysql_test.go # CTX-1-005（//go:build mysql，并发全量替换）
+│   ├── concurrency_mysql_test.go # CTX-1-005（//go:build mysql，并发全量替换）
+│   └── replace_conflict_mysql_test.go # CTX-1-006（//go:build mysql，409 冲突语义，issue #295）
 └── get/
     └── get_test.go               # CTX-2-001 ~ CTX-2-003（GET）
 
@@ -92,6 +93,7 @@ innerapi/ai_context/
 | CTX-1-003 | 清空 | 边界值 | - | `{"rules":[]}` → 200 且 GET `rules==[]`（非 null） |
 | CTX-1-004 | 操作审计 | 审计 | 家族7（#201/#155） | PUT 成功记 update 审计（diff_keys ElementsMatch 精确匹配、快照小写词汇无 id）；PUT 422 记失败审计且身份固定不依赖请求体 |
 | CTX-1-005 | 并发全量替换（MySQL） | 并发 | 家族10 | 20 goroutine 并发 PUT 互不相同单规则集合 → 无 5xx，最终集合与某次提交完全相等（`//go:build mysql`，SQLite 不编译） |
+| CTX-1-006 | 整体替换冲突返回 409（MySQL） | 并发 | 家族10（#295） | 外部会话占住命名锁 → PUT 返回 409 且 `ErrMsg` 不含驱动错误原文；释放后同一请求 200 |
 
 ### 6.4 测试场景详细设计
 
@@ -149,6 +151,10 @@ innerapi/ai_context/
 #### 6.4.4 CTX-1-004：操作审计（审计，家族7 / #201 / #155）
 
 照 ai_cache AC-1-010 手法：成功路径轮询 `GET /operation-logs`（`resource_type=ai_context_rule, action=update, status=1`，按 change_summary 特征串匹配到本用例），断言 `change_summary` 键集合精确 `{before, after, diff_keys}`、`diff_keys` ElementsMatch 精确 `{rules}`、快照规则元素恰 4 合同键无 id；失败路径（mode 非法 422）断言 `status=2` 审计出现且 `resource_id=resource_name=ai_context_rules`（服务端固定身份，不依赖请求体 #155）。
+
+#### 6.4.5.1 CTX-1-006：整体替换冲突返回 409（MySQL，家族10，issue #295）
+
+外部会话先 `SELECT GET_LOCK('ai_gateway:replace:ai_context_rules', 0)` 占住集合级命名锁，再 PUT 集合：断言 `ErrNum=409`、`ErrMsg` 以 `Conflict` 开头且不含驱动错误原文；释放锁后同一请求返回 200。与 AC-1-013 一起确认三个集合资源各自使用独立命名锁。
 
 #### 6.4.5 CTX-1-005：并发全量替换（MySQL，家族10）
 

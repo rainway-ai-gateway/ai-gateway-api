@@ -136,15 +136,16 @@ type Filter struct {
 // LogFilter extends Filter with log-list-only criteria.
 type LogFilter struct {
 	Filter
-	RequestedModels []string  // ai_requested_model
-	ErrOnly         bool      // only rows with non-empty err_code
-	Keyword         string    // fuzzy match against err_msg
-	CacheStatus     *string   // exact match on ai_cache_status (hit/miss/skip)
-	MirrorHit       *bool     // exact match on mirror_hit
-	IntentQuestion  *string   // exact match on ai_intent_question
-	IntentAnswer    *string   // exact match on ai_intent_answer (may be "unknown")
-	IntentSource    *string   // exact match on ai_intent_source (explicit_header/classifier/cache)
-	Page            int       // 1-based
+	RequestedModels []string // ai_requested_model
+	ErrOnly         bool     // only rows with non-empty err_code
+	Keyword         string   // fuzzy match against err_msg
+	CacheStatus     *string  // exact match on ai_cache_status (hit/miss/skip)
+	MirrorHit       *bool    // exact match on mirror_hit
+	IntentQuestion  *string  // exact match on ai_intent_question
+	IntentAnswer    *string  // exact match on ai_intent_answer (may be "unknown")
+	IntentSource    *string  // exact match on ai_intent_source (explicit_header/classifier/cache)
+	PriceWarn       *string  // exact match on ai_price_warn (missing-price shape, issue #1479)
+	Page            int      // 1-based
 	PageSize        int
 }
 
@@ -262,56 +263,58 @@ type DistItem struct {
 // CostValue is the cost amount in the currency unit (converted from the
 // fixed-point value), nil when the row has no cost.
 type LogRow struct {
-	LogID               *int64  `json:"logid"`
-	LogTime             int64   `json:"log_time"`
-	Hostid              *string `json:"hostid"`
-	Product             *string `json:"product"`
-	APIKeyID            *string `json:"ai_apikey_id"`
-	RequestedModel      *string `json:"ai_requested_model"`
-	TargetModel         *string `json:"ai_target_model"`
-	Provider            *string `json:"ai_provider"`
-	Protocol            *string `json:"ai_protocol"`
-	Mode                *string `json:"ai_mode"`
-	Stream              *int16  `json:"ai_stream"`
-	StatusCode          *int16  `json:"res_status_code"`
-	ErrCode             *string `json:"err_code"`
-	ErrMsg              *string `json:"err_msg"`
-	InputTokens         *int64  `json:"ai_input_tokens"`
-	OutputTokens        *int64  `json:"ai_output_tokens"`
-	TotalTokens         *int64  `json:"ai_total_tokens"`
-	AllTime             *int64  `json:"all_time"`
-	TTFTUs              *int64  `json:"ai_ttft_us"`
-	TPOTUs              *int64  `json:"ai_tpot_us"`
+	LogID               *int64   `json:"logid"`
+	LogTime             int64    `json:"log_time"`
+	Hostid              *string  `json:"hostid"`
+	Product             *string  `json:"product"`
+	APIKeyID            *string  `json:"ai_apikey_id"`
+	RequestedModel      *string  `json:"ai_requested_model"`
+	TargetModel         *string  `json:"ai_target_model"`
+	Provider            *string  `json:"ai_provider"`
+	Protocol            *string  `json:"ai_protocol"`
+	Mode                *string  `json:"ai_mode"`
+	Stream              *int16   `json:"ai_stream"`
+	StatusCode          *int16   `json:"res_status_code"`
+	ErrCode             *string  `json:"err_code"`
+	ErrMsg              *string  `json:"err_msg"`
+	InputTokens         *int64   `json:"ai_input_tokens"`
+	OutputTokens        *int64   `json:"ai_output_tokens"`
+	TotalTokens         *int64   `json:"ai_total_tokens"`
+	AllTime             *int64   `json:"all_time"`
+	TTFTUs              *int64   `json:"ai_ttft_us"`
+	TPOTUs              *int64   `json:"ai_tpot_us"`
 	CostValue           *float64 `json:"ai_cost_value"`
-	CostCurrency        *string `json:"ai_cost_currency"`
-	RateLimitHits       *string `json:"ai_rate_limit_hits"`
-	AuthRejectQuotaPlan *string `json:"ai_auth_reject_quota_plans"`
-	Level1Name          *string `json:"level1Name"`
-	Level1              *string `json:"level1"`
-	Level2Name          *string `json:"level2Name"`
-	Level2              *string `json:"level2"`
-	Level3Name          *string `json:"level3Name"`
-	Level3              *string `json:"level3"`
-	Level4Name          *string `json:"level4Name"`
-	Level4              *string `json:"level4"`
-	Level5Name          *string `json:"level5Name"`
-	Level5              *string `json:"level5"`
-	ClientIP            *string `json:"client_ip"`
-	HeaderHost          *string `json:"header_host"`
-	OriginURI           *string `json:"origin_uri"`
-	ReqHeaders          *string `json:"req_headers"`
-	ResHeaders          *string `json:"res_headers"`
+	CostCurrency        *string  `json:"ai_cost_currency"`
+	PriceMiss           *bool    `json:"ai_price_miss"`
+	PriceWarn           *string  `json:"ai_price_warn"`
+	RateLimitHits       *string  `json:"ai_rate_limit_hits"`
+	AuthRejectQuotaPlan *string  `json:"ai_auth_reject_quota_plans"`
+	Level1Name          *string  `json:"level1Name"`
+	Level1              *string  `json:"level1"`
+	Level2Name          *string  `json:"level2Name"`
+	Level2              *string  `json:"level2"`
+	Level3Name          *string  `json:"level3Name"`
+	Level3              *string  `json:"level3"`
+	Level4Name          *string  `json:"level4Name"`
+	Level4              *string  `json:"level4"`
+	Level5Name          *string  `json:"level5Name"`
+	Level5              *string  `json:"level5"`
+	ClientIP            *string  `json:"client_ip"`
+	HeaderHost          *string  `json:"header_host"`
+	OriginURI           *string  `json:"origin_uri"`
+	ReqHeaders          *string  `json:"req_headers"`
+	ResHeaders          *string  `json:"res_headers"`
 
-	AICacheStatus           *string  `json:"ai_cache_status"`
-	MirrorHit               *bool    `json:"mirror_hit"`
-	MirrorCluster           *string  `json:"mirror_cluster"`
-	AIIntentQuestion        *string  `json:"ai_intent_question"`
-	AIIntentAnswer          *string  `json:"ai_intent_answer"`
-	AIIntentConfidence      *float64 `json:"ai_intent_confidence"`
-	AIIntentSource          *string  `json:"ai_intent_source"`
-	AIIntentLatencyUs       *int64   `json:"ai_intent_latency_us"`
-	AIIntentCacheHit        *bool    `json:"ai_intent_cache_hit"`
-	AIIntentQuestionsVer    *string  `json:"ai_intent_questions_version"`
+	AICacheStatus        *string  `json:"ai_cache_status"`
+	MirrorHit            *bool    `json:"mirror_hit"`
+	MirrorCluster        *string  `json:"mirror_cluster"`
+	AIIntentQuestion     *string  `json:"ai_intent_question"`
+	AIIntentAnswer       *string  `json:"ai_intent_answer"`
+	AIIntentConfidence   *float64 `json:"ai_intent_confidence"`
+	AIIntentSource       *string  `json:"ai_intent_source"`
+	AIIntentLatencyUs    *int64   `json:"ai_intent_latency_us"`
+	AIIntentCacheHit     *bool    `json:"ai_intent_cache_hit"`
+	AIIntentQuestionsVer *string  `json:"ai_intent_questions_version"`
 }
 
 // LogQueryResult is the data of GET /report/logs.

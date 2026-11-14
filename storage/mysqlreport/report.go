@@ -196,6 +196,9 @@ func logWhere(f *ireport.LogFilter) map[string]interface{} {
 	if f.IntentSource != nil {
 		where["ai_intent_source ="] = *f.IntentSource
 	}
+	if f.PriceWarn != nil {
+		where["ai_price_warn ="] = *f.PriceWarn
+	}
 	return where
 }
 
@@ -234,9 +237,9 @@ var overviewMetricFields = []string{
 	"IFNULL(SUM(total_tokens),0) AS total_tokens",
 	"IFNULL(SUM(all_time_sum),0) AS all_time_sum",
 	"IFNULL(MAX(all_time_sum/request_count),0) AS latency_max",
-	"IFNULL(SUM(ttft_us_sum),0) AS ttft_us_sum",
+	"IFNULL(SUM(CASE WHEN ai_stream=1 THEN ttft_us_sum ELSE 0 END),0) AS ttft_us_sum",
 	"IFNULL(SUM(CASE WHEN ai_stream=1 THEN request_count ELSE 0 END),0) AS stream_requests",
-	"IFNULL(SUM(tpot_us_sum),0) AS tpot_us_sum",
+	"IFNULL(SUM(CASE WHEN ai_stream=1 THEN tpot_us_sum ELSE 0 END),0) AS tpot_us_sum",
 	"IFNULL(SUM(rate_limit_hits),0) AS rate_limit_hits",
 	"IFNULL(SUM(auth_reject_count),0) AS auth_rejects",
 	"IFNULL(SUM(cache_read_tokens),0) AS cache_read_tokens",
@@ -341,8 +344,8 @@ func timeSeriesMetricFields(metric string, bucketSec int, column string) ([]stri
 			"MAX(all_time_sum/request_count) AS latency_max")
 	case ireport.MetricTTFT, ireport.MetricTPOT:
 		fields = append(fields,
-			"SUM(ttft_us_sum) AS ttft_us_sum",
-			"SUM(tpot_us_sum) AS tpot_us_sum",
+			"SUM(CASE WHEN ai_stream=1 THEN ttft_us_sum ELSE 0 END) AS ttft_us_sum",
+			"SUM(CASE WHEN ai_stream=1 THEN tpot_us_sum ELSE 0 END) AS tpot_us_sum",
 			"SUM(CASE WHEN ai_stream=1 THEN request_count ELSE 0 END) AS stream_requests")
 	case ireport.MetricCost:
 		fields = append(fields,
@@ -495,6 +498,8 @@ var logRowFields = []string{
 	"ai_tpot_us",
 	"ai_cost_value",
 	"ai_cost_currency",
+	"ai_price_miss",
+	"ai_price_warn",
 	"ai_rate_limit_hits",
 	"ai_auth_reject_quota_plans",
 	"level1Name",
@@ -1067,6 +1072,8 @@ func scanLogRow(scanner metricRowScanner) (*ireport.LogRow, error) {
 		tpotUs              sql.NullInt64
 		costValue           sql.NullInt64
 		costCurrency        sql.NullString
+		priceMiss           sql.NullInt64
+		priceWarn           sql.NullString
 		rateLimitHits       sql.NullString
 		authRejectQuotaPlan sql.NullString
 		level1Name          sql.NullString
@@ -1119,6 +1126,8 @@ func scanLogRow(scanner metricRowScanner) (*ireport.LogRow, error) {
 		&tpotUs,
 		&costValue,
 		&costCurrency,
+		&priceMiss,
+		&priceWarn,
 		&rateLimitHits,
 		&authRejectQuotaPlan,
 		&level1Name,
@@ -1174,6 +1183,8 @@ func scanLogRow(scanner metricRowScanner) (*ireport.LogRow, error) {
 		TPOTUs:              nullInt64Ptr(tpotUs),
 		CostValue:           nullCostAmountPtr(costValue),
 		CostCurrency:        nullStringPtr(costCurrency),
+		PriceMiss:           nullBoolPtr(priceMiss),
+		PriceWarn:           nullStringPtr(priceWarn),
 		RateLimitHits:       nullStringPtr(rateLimitHits),
 		AuthRejectQuotaPlan: nullStringPtr(authRejectQuotaPlan),
 		Level1Name:          nullStringPtr(level1Name),

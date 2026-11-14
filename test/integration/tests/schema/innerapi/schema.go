@@ -73,32 +73,37 @@ var AIKeyPolicySchema = &testutil.ObjectSchema{
 	Required: []string{
 		"Strategy", "MaxRetries", "RetryBackoffInitial", "RetryBackoffMax",
 		"SessionAffinity", "SessionAffinityTTL", "SessionAffinityRedisPrefix", "SessionAffinityPenaltyEnable",
+		"SessionAffinityPenaltyTTL429", "SessionAffinityPenaltyTTLAuth",
 	},
 	Fields: map[string]testutil.FieldSpec{
-		"Strategy":                     {Type: testutil.TypeString},
-		"MaxRetries":                   {Type: testutil.TypeInt},
-		"RetryBackoffInitial":          {Type: testutil.TypeInt},
-		"RetryBackoffMax":              {Type: testutil.TypeInt},
-		"SessionAffinity":              {Type: testutil.TypeBool},
-		"SessionAffinityTTL":           {Type: testutil.TypeInt},
-		"SessionAffinityRedisPrefix":   {Type: testutil.TypeString},
-		"SessionAffinityPenaltyEnable": {Type: testutil.TypeBool},
+		"Strategy":                      {Type: testutil.TypeString},
+		"MaxRetries":                    {Type: testutil.TypeInt},
+		"RetryBackoffInitial":           {Type: testutil.TypeInt},
+		"RetryBackoffMax":               {Type: testutil.TypeInt},
+		"SessionAffinity":               {Type: testutil.TypeBool},
+		"SessionAffinityTTL":            {Type: testutil.TypeInt},
+		"SessionAffinityRedisPrefix":    {Type: testutil.TypeString},
+		"SessionAffinityPenaltyEnable":  {Type: testutil.TypeBool},
+		"SessionAffinityPenaltyTTL429":  {Type: testutil.TypeInt},
+		"SessionAffinityPenaltyTTLAuth": {Type: testutil.TypeInt},
 	},
 }
 
 // AIConfSchema ClusterConf.Config.<cluster>.AIConf 的 schema
 var AIConfSchema = &testutil.ObjectSchema{
 	Required: []string{"KeyPolicy"},
-	Optional: []string{"Keys", "ModelMappings", "ModelTable", "MatchPrefix", "StripPrefix", "ModelProtocols", "NormalizeUpstreamError"},
+	Optional: []string{"Keys", "ModelMappings", "ModelTable", "MatchPrefix", "StripPrefix", "ModelProtocols", "NormalizeUpstreamError", "EnsureReasoningContent", "PriceMissAction"},
 	Fields: map[string]testutil.FieldSpec{
-		"Keys":           {Type: testutil.TypeArray},
-		"KeyPolicy":      {Type: testutil.TypeObject, Nested: AIKeyPolicySchema},
-		"ModelMappings":  {Type: testutil.TypeObject},
-		"ModelTable":     {Type: testutil.TypeObject, Nested: ModelTableSchema},
-		"MatchPrefix":    {Type: testutil.TypeString},
-		"StripPrefix":    {Type: testutil.TypeBool},
-		"ModelProtocols": {Type: testutil.TypeArray, Item: &testutil.FieldSpec{Type: testutil.TypeString}},
+		"Keys":                   {Type: testutil.TypeArray},
+		"KeyPolicy":              {Type: testutil.TypeObject, Nested: AIKeyPolicySchema},
+		"ModelMappings":          {Type: testutil.TypeObject},
+		"ModelTable":             {Type: testutil.TypeObject, Nested: ModelTableSchema},
+		"MatchPrefix":            {Type: testutil.TypeString},
+		"StripPrefix":            {Type: testutil.TypeBool},
+		"ModelProtocols":         {Type: testutil.TypeArray, Item: &testutil.FieldSpec{Type: testutil.TypeString}},
 		"NormalizeUpstreamError": {Type: testutil.TypeObject},
+		"EnsureReasoningContent": {Type: testutil.TypeArray, Item: &testutil.FieldSpec{Type: testutil.TypeString}},
+		"PriceMissAction":        {Type: testutil.TypeString},
 	},
 }
 

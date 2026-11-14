@@ -362,18 +362,81 @@ func TestReleaseReserve_MultiPlan(t *testing.T) {
 }
 
 func TestPickProviderInstance(t *testing.T) {
-	assert.Nil(t, pickProviderInstance(nil))
+	ctx := context.Background()
+	m := NewManager(&fakeBatchStorager{}, &fakeRedisClient{},
+		&fakeAPIKeyQuerier{}, &fakeProviderQuerier{}, &fakePriceQuerier{}, nil, &fakeClock{})
+
+	inst, err := m.pickProviderInstance(ctx, nil)
+	require.NoError(t, err)
+	assert.Nil(t, inst)
+
 	p := &iprovider.Provider{InstancePool: []iprovider.ProviderInstance{
 		{Addr: "1.1.1.1", Port: 1, Disable: true},
 		{Addr: "", Port: 2},
 		{Addr: "2.2.2.2", Port: 0},
 	}}
-	assert.Nil(t, pickProviderInstance(p), "禁用/缺地址/缺端口实例均不可用")
+	inst, err = m.pickProviderInstance(ctx, p)
+	require.NoError(t, err)
+	assert.Nil(t, inst, "禁用/缺地址/缺端口实例均不可用")
 
 	p.InstancePool = append(p.InstancePool, iprovider.ProviderInstance{Addr: "3.3.3.3", Port: 443})
-	inst := pickProviderInstance(p)
+	inst, err = m.pickProviderInstance(ctx, p)
+	require.NoError(t, err)
 	require.NotNil(t, inst)
 	assert.Equal(t, "3.3.3.3", inst.Addr)
+}
+
+func TestPickProviderInstance_K8sRealtime(t *testing.T) {
+	ctx := context.Background()
+
+	newK8sManager := func(instances []iprovider.ProviderInstance, readerErr error) *Manager {
+		m := NewManager(&fakeBatchStorager{}, &fakeRedisClient{},
+			&fakeAPIKeyQuerier{}, &fakeProviderQuerier{}, &fakePriceQuerier{}, nil, &fakeClock{})
+		m.SetInstancePoolResolver(iprovider.NewInstancePoolResolver(&fakeK8sInstanceReader{
+			instances: instances,
+			err:       readerErr,
+		}))
+		return m
+	}
+
+	poolName := "svc-a"
+	k8sProvider := &iprovider.Provider{
+		Name:           "k8s-prov",
+		InstanceSource: iprovider.InstanceSourceK8sPool,
+		K8sPoolName:    &poolName,
+	}
+
+	t.Run("k8s provider resolves instances from the reader", func(t *testing.T) {
+		m := newK8sManager([]iprovider.ProviderInstance{
+			{Addr: "10.0.0.1", Port: 8000, Weight: 100},
+			{Addr: "10.0.0.2", Port: 8000, Weight: 100, Disable: true},
+		}, nil)
+		inst, err := m.pickProviderInstance(ctx, k8sProvider)
+		require.NoError(t, err)
+		require.NotNil(t, inst)
+		assert.Equal(t, "10.0.0.1", inst.Addr)
+	})
+
+	t.Run("k8s provider with no instances yields unavailable", func(t *testing.T) {
+		m := newK8sManager(nil, nil)
+		inst, err := m.pickProviderInstance(ctx, k8sProvider)
+		require.NoError(t, err)
+		assert.Nil(t, inst)
+	})
+
+	t.Run("reader error propagates", func(t *testing.T) {
+		m := newK8sManager(nil, errors.New("k8s_pools down"))
+		_, err := m.pickProviderInstance(ctx, k8sProvider)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "k8s_pools down")
+	})
+
+	t.Run("unconfigured resolver on a k8s provider is an error", func(t *testing.T) {
+		m := NewManager(&fakeBatchStorager{}, &fakeRedisClient{},
+			&fakeAPIKeyQuerier{}, &fakeProviderQuerier{}, &fakePriceQuerier{}, nil, &fakeClock{})
+		_, err := m.pickProviderInstance(ctx, k8sProvider)
+		require.Error(t, err)
+	})
 }
 
 func TestBuildInstanceBaseURL(t *testing.T) {

@@ -63,7 +63,9 @@
             "enabled": true,
             "ttl": 600,
             "redis_prefix": "bfe:ai:key_affinity",
-            "penalty_enable": true
+            "penalty_enable": true,
+            "penalty_ttl_429": 60,
+            "penalty_ttl_auth": 300
         },
         "normalize_upstream_error": {
             "enabled": true,
@@ -72,6 +74,8 @@
             "max_body_bytes": 65536,
             "redact_secrets": true
         },
+        "ensure_reasoning_content": ["openai"],
+        "price_miss_action": "fallback_chat",
         "provider": "deepseek",
         "match_prefix": "deepseek/",
         "strip_prefix": true
@@ -117,7 +121,7 @@
         },
         "timeout": {
             "connect": "500ms",
-            "call": "3s"
+            "call": "11s"
         }
     },
     "llm_config": {
@@ -192,6 +196,8 @@
 | key_policy| object |  Key 路由策略 | N | 多 Key 时的选择策略、重试与退避配置 | 非必填；默认见下方 表：Key 路由策略；`strategy` 本版仅支持 `weighted_random` |
 | key_affinity| object |  Key 亲和性配置 | N | 基于 Redis + `ClientKeyId` 的会话级 Key 亲和性 | 非必填；默认见下方 表：Key 亲和性配置 |
 | normalize_upstream_error| object |  上游错误体归一配置 | N | 上游厂商错误归一为网关统一错误码与 OpenAI 兼容错误体（含状态码重映射、凭证脱敏、SSE 错误事件改写），按集群独立灰度 | 非必填；默认见下方 表：上游错误归一配置；缺省 = 关闭（上游错误原样透传） |
+| ensure_reasoning_content| []string |  需要补齐 `reasoning_content` 的协议列表 | N | 部分思考模式上游要求"最后一条 user 消息之后"的 assistant 消息必须回传 `reasoning_content`，而它自身又有不产出 reasoning 的回合；开启后网关在转发的请求体里为该窗口内的 assistant 补空串（`openai`）或空 thinking 块（`anthropic`），只增不改、异常原样透传。按集群独立开关与灰度 | 非必填；缺省或空数组 = 关闭；元素仅允许 `openai`、`anthropic`（`gemini` 无注入落点，显式拒绝）；元素不得为空或重复；每个元素必须包含在该 cluster 所属 provider 的 `model_protocols` 中（provider 未声明时按 `["openai"]` 对待） |
+| price_miss_action| string |  缺价处置动作 | N | 请求的（模型， 接口类型）无价格条目时的动作：`fallback_chat`（按同模型 chat 价回退计费，**默认**）、`bill_zero`（按 0 计费）、`reject`（转发前拒绝：HTTP 503 + `error.code=PRICE_NOT_CONFIGURED`，不调用上游、不计费）；`reject` 下集群价格表整体缺失同样拒绝 | 非必填；默认 `fallback_chat`；取值须为 `fallback_chat` / `bill_zero` / `reject`；控制台新建集群显式落值，省略等价默认 |
 | provider| string |  所属 provider | Y | 用于关联 provider、解析后端实例池/key 明文/生成 `ModelTable` | 必填；非空；必须引用 `/providers` 中已存在的 provider |
 | match_prefix| string |  需要匹配的 provider/model 前缀 | N | 例如 `openrouter/`；用于 OpenRouter 等聚合 provider 场景；必须以 `/` 结尾 | 非必填；`strip_prefix=true` 时必填 |
 | strip_prefix| bool |  是否裁剪 `match_prefix` 指定前缀 | N | `true` 时转发给下游前会从请求 `model` 字段中去掉该前缀；`false` 时仅用于路由标识，不裁剪 | 非必填；默认 `false` |
@@ -226,6 +232,8 @@
 | ttl | int | 绑定空闲超时时间 | N | 单位秒，默认 `600`；命中绑定后 BFE 会刷新 TTL，持续请求则绑定保持 | 非必填；若传入，须为 `>0` 的整数 |
 | redis_prefix | string | Redis key 前缀 | N | 默认 `"bfe:ai:key_affinity"` | 非必填；若传入，必须非空 |
 | penalty_enable | bool | 是否开启 Key 惩罚 | N | 默认 `true`；为 `true` 时，近期返回 429/401/403 的 Key 会被跳过 | 非必填；必须为 bool |
+| penalty_ttl_429 | int | 上游 429 时的惩罚时长 | N | 单位秒，默认 `60`；与 `ttl`（绑定空闲超时，默认 600）无关；`0` / 缺省不是「关闭」，缺省取默认值 | 非必填；若传入须为 `[10, 600]` 的整数 |
+| penalty_ttl_auth | int | 上游 401/402/403 时的惩罚时长 | N | 单位秒，默认 `300`；语义同上 | 非必填；若传入须为 `[60, 1800]` 的整数 |
 
 **表：上游错误归一配置（`llm_config.normalize_upstream_error`）**
 
@@ -267,8 +275,8 @@
 | 参数名 | 类型 | 参数含义 | 必填 | 补充描述 | 合法性条件 |
 | - | -  | - | - | - | - |
 | max_requests | int | 全局并发上限（跨全部优先级带）；`-1` 为显式"不限"（更新时用于明确恢复不限） | N | 缺省表示不限；`-1` 也表示不限 | 非必填；若传入，取值 `>0` 或 `-1` |
-| queue_ttl | int | 池**有端点**时的排队预算（**单位：秒**），超期以可重试背压错误拒绝 | N | 缺省由 EPP 决定（llm-d 默认 60 秒）；`0` 为显式禁用驱逐 | 非必填；取值 ≥ 0 的整数 |
-| no_endpoint_queue_ttl | int | 池**无端点**（冷启动扩容）时的排队预算（**单位：秒**），regime 切换时重新起算 | N | 默认值为跟随 `queue_ttl` | 非必填；同 `queue_ttl` |
+| queue_ttl | int | 池**有端点**时的排队预算（**单位：秒**），超期以可重试背压错误拒绝 | N | 缺省 **9 秒**（由 api 在下发配置中显式补齐）；`0` 为显式禁用驱逐 | 非必填；取值 ≥ 0 的整数 |
+| no_endpoint_queue_ttl | int | 池**无端点**（冷启动扩容）时的排队预算（**单位：秒**），regime 切换时重新起算 | N | 默认跟随 `queue_ttl`（缺省同为 **9 秒**） | 非必填；同 `queue_ttl` |
 | enable_eviction | bool | 需求驱动驱逐：高优先级被饱和阻塞时终止负优先级在飞请求回收容量 | N | **当前 EPP 未接线，请保持 `false`**；编译产物不下发该字段 | 非必填；默认值为 `false`；**建议仅允许 `false`（`true` 拒绝）** |
 
 **表：EPP运行时配置（`epp_runtime`）**
@@ -285,7 +293,7 @@
 | check.success_threshold | int | 连续成功次数阈值（达到后切回高优先级地址） | N | 对应 `EPPCheck.SuccessThreshold` | 非必填；默认 `2`；须为 `>=1` 的整数 |
 | timeout | object | EPP 调用超时 | N | 对应 BFE `GslbBasic.EPPTimeout` | 非必填；若传入，子字段见本表 |
 | timeout.connect | string | 建立 gRPC 连接/流超时，duration 字符串 | N | 对应 `EPPTimeout.Connect` | 非必填；默认 `500ms`；须为 `>0` 的合法 duration |
-| timeout.call | string | 首条消息（RequestHeaders 收发）超时，duration 字符串 | N | 对应 `EPPTimeout.Call` | 非必填；默认 `3s`；须为 `>0` 的合法 duration |
+| timeout.call | string | 首条消息（RequestHeaders 收发）超时，duration 字符串 | N | 对应 `EPPTimeout.Call`；须大于 `max(queue_ttl, no_endpoint_queue_ttl)`，默认值与 `queue_ttl` 默认 9s 搭配（11 > 9） | 非必填；默认 `11s`；须为 `>0` 的合法 duration |
 
 > **固定下发（不可配置）**：
 > - `EPPTLS`：恒为 `{ "Plaintext": true }`（统一明文接入 EPP），取代 BFE legacy `{Insecure:true}` 默认。
@@ -316,6 +324,8 @@
   - `ttl` 须为 `>0` 的整数；
   - `redis_prefix` 若传入须非空；
   - `penalty_enable` 必须为 bool。
+  - `penalty_ttl_429` 若传入须为 `[10, 600]` 的整数（`0` / 负数 / 越界返回 422）；
+  - `penalty_ttl_auth` 若传入须为 `[60, 1800]` 的整数（同上）。
 - `llm_config.normalize_upstream_error` 若传入：
   - `enabled` / `stream_enabled` / `redact_secrets` 必须为 bool；
   - `unrecognized_action` 取值仅支持 `passthrough`、`rewrite_generic`；
@@ -498,7 +508,7 @@
         },
         "timeout": {
             "connect": "500ms",
-            "call": "3s"
+            "call": "11s"
         }
     }
 }
@@ -625,6 +635,7 @@
 > **注意：**
 > - `sub_clusters` 与 `scheduler` 为系统内部自动生成，更新时不支持手动修改。
 > - `llm_config.keys` 作为数组，按**全量替换**处理，即调用方需传入完整的最新 Key 引用列表。这与当前 `model_mappings` 的 PATCH 语义保持一致。
+- `llm_config.key_affinity` 同样按**整体替换**处理：未传的子字段按默认值补齐（例如只传 `penalty_ttl_auth` 会把 `enabled` / `ttl` / `redis_prefix` / `penalty_enable` / `penalty_ttl_429` 重置为默认值）。修改单个字段前请先 GET 集群、再提交完整的 `llm_config`。
 
 **HTTP BODY参数示例**
 

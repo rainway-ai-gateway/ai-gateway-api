@@ -19,6 +19,7 @@ import (
 	"math"
 	"net"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -27,7 +28,6 @@ import (
 	golibquota "github.com/bfenetworks/go-lib/quota"
 
 	"github.com/rainway-ai-gateway/ai-gateway-api/lib/xerror"
-	"github.com/rainway-ai-gateway/ai-gateway-api/model/icluster_conf"
 	"github.com/rainway-ai-gateway/ai-gateway-api/model/shared"
 )
 
@@ -261,21 +261,36 @@ func reverseString(s string) string {
 	return string(r)
 }
 
-// TokenName validates a token name.
-func TokenName(s string) error {
+// tokenNameFormat validates the generic token_name format: length 1..64,
+// charset [a-zA-Z0-9_.-], and no leading/trailing '.', '-', '_'. It does
+// not check reserved names.
+func tokenNameFormat(s string) error {
 	if err := validateName(s, 1, MaxTokenNameLength, "token_name"); err != nil {
 		return err
 	}
 	if err := validateNamePattern(s, nameToken, "token_name"); err != nil {
 		return err
 	}
-	if err := validateNameEdges(s, "token_name"); err != nil {
+	return validateNameEdges(s, "token_name")
+}
+
+// TokenName validates a token name.
+func TokenName(s string) error {
+	if err := tokenNameFormat(s); err != nil {
 		return err
 	}
 	if reservedTokenNames[strings.ToLower(s)] {
 		return xerror.WrapParamErrorWithMsg("token_name %q is reserved", s)
 	}
 	return nil
+}
+
+// TokenNameRef validates a token_name that references an existing token (the
+// by-name lookup used by query/delete endpoints): format only, reserved names
+// are allowed — built-in tokens must remain operable through these very
+// endpoints. Do not add a reserved-name check here.
+func TokenNameRef(s string) error {
+	return tokenNameFormat(s)
 }
 
 // ClusterName validates a cluster name.
@@ -348,6 +363,18 @@ func EntityTypeName(s string) error {
 func Description(s string, maxLen int, name string) error {
 	if len(s) > maxLen {
 		return xerror.WrapParamErrorWithMsg("%s length must be <= %d", name, maxLen)
+	}
+	return NoControlChars(s)
+}
+
+// DescriptionRange validates a description string whose byte length must fall
+// within [minLen, maxLen] (UTF-8 bytes) and contain no control characters.
+// Use this instead of pairing Description with a validator `min` struct tag:
+// go-playground/validator counts `min` in runes, which disagrees with the
+// byte-based wording of certificates.md §1/§2.1 (issue #310).
+func DescriptionRange(s string, minLen, maxLen int, name string) error {
+	if len(s) < minLen || len(s) > maxLen {
+		return xerror.WrapParamErrorWithMsg("%s length must be between %d and %d bytes", name, minLen, maxLen)
 	}
 	return NoControlChars(s)
 }
@@ -439,6 +466,9 @@ func QuotaValue(quota *float64, unit string) error {
 	if quota == nil {
 		return nil
 	}
+	if math.IsNaN(*quota) || math.IsInf(*quota, 0) {
+		return xerror.WrapParamErrorWithMsg("quota must be a finite number")
+	}
 	if *quota < 0 {
 		return xerror.WrapParamErrorWithMsg("quota must be >= 0")
 	}
@@ -458,9 +488,19 @@ func QuotaValue(quota *float64, unit string) error {
 }
 
 func validDecimalPlaces(v float64, maxPlaces int) bool {
-	mult := math.Pow(10, float64(maxPlaces))
-	scaled := v * mult
-	return math.Abs(scaled-math.Round(scaled)) < 1e-9
+	if math.IsNaN(v) || math.IsInf(v, 0) {
+		return false
+	}
+	// Count the fractional digits of the shortest decimal representation that
+	// round-trips to v. Scaling by 10^maxPlaces instead would compare a rounding
+	// error of up to half an ulp against the 1e-9 threshold, which rejects valid
+	// values at the magnitudes RMB quotas use (issue #293: 0.14, 600.1234).
+	repr := strconv.FormatFloat(v, 'f', -1, 64)
+	dot := strings.IndexByte(repr, '.')
+	if dot < 0 {
+		return true
+	}
+	return len(repr)-dot-1 <= maxPlaces
 }
 
 // RateLimitPolicy validates a rate limit policy configuration.
@@ -598,6 +638,9 @@ func RouteRules(p *shared.RouteRulesParam) error {
 
 	nameSet := map[string]struct{}{}
 	for _, rule := range p.Rules {
+		if rule == nil {
+			return xerror.WrapParamErrorWithMsg("route rule element cannot be null")
+		}
 		if rule.Name == nil || *rule.Name == "" {
 			return xerror.WrapParamErrorWithMsg("route rule name is required")
 		}
@@ -620,6 +663,9 @@ func RouteRules(p *shared.RouteRulesParam) error {
 		totalWeight := 0
 		targetKeySet := map[string]struct{}{}
 		for _, target := range rule.Targets {
+			if target == nil {
+				return xerror.WrapParamErrorWithMsg("target element cannot be null")
+			}
 			if target.Weight == nil {
 				return xerror.WrapParamErrorWithMsg("target weight is required")
 			}
@@ -655,6 +701,9 @@ func RouteRules(p *shared.RouteRulesParam) error {
 
 		fallbackKeySet := map[string]struct{}{}
 		for _, fallback := range rule.Fallbacks {
+			if fallback == nil {
+				return xerror.WrapParamErrorWithMsg("fallback element cannot be null")
+			}
 			if fallback.ClusterName == nil || *fallback.ClusterName == "" {
 				return xerror.WrapParamErrorWithMsg("fallback ClusterName is required")
 			}
@@ -1050,181 +1099,3 @@ func TrafficMirrorRules(param *shared.TrafficMirrorRulesParam) error {
 	return nil
 }
 
-// LLMConfig validates the LLM configuration block used by clusters.
-func LLMConfig(c *icluster_conf.LLMConfig) error {
-	if c == nil {
-		return xerror.WrapParamErrorWithMsg("llm_config is required")
-	}
-	if c.Provider == nil || *c.Provider == "" {
-		return xerror.WrapParamErrorWithMsg("llm_config.provider is required")
-	}
-	if len(c.Models) == 0 {
-		return xerror.WrapParamErrorWithMsg("llm_config.models is required")
-	}
-	modelSet := map[string]struct{}{}
-	for _, model := range c.Models {
-		if len(model) == 0 {
-			return xerror.WrapParamErrorWithMsg("llm_config.models cannot contain empty model name")
-		}
-		if _, ok := modelSet[model]; ok {
-			return xerror.WrapParamErrorWithMsg("duplicate model in llm_config.models: %s", model)
-		}
-		modelSet[model] = struct{}{}
-	}
-
-	sourceSet := map[string]struct{}{}
-	for _, mapping := range c.ModelMappings {
-		if mapping.SourceModel == nil || *mapping.SourceModel == "" {
-			return xerror.WrapParamErrorWithMsg("llm_config.model_mappings.source_model is required")
-		}
-		if mapping.TargetModel == nil || *mapping.TargetModel == "" {
-			return xerror.WrapParamErrorWithMsg("llm_config.model_mappings.target_model is required")
-		}
-		if _, ok := sourceSet[*mapping.SourceModel]; ok {
-			return xerror.WrapParamErrorWithMsg("duplicate source_model in llm_config.model_mappings: %s", *mapping.SourceModel)
-		}
-		sourceSet[*mapping.SourceModel] = struct{}{}
-	}
-
-	// Validate key references
-	if len(c.Keys) > 0 {
-		nameSet := map[string]struct{}{}
-		totalWeight := 0
-		for i, key := range c.Keys {
-			if key.Name == nil || *key.Name == "" {
-				return xerror.WrapParamErrorWithMsg("llm_config.keys[%d].name is required", i)
-			}
-			if len(*key.Name) < 1 || len(*key.Name) > 128 {
-				return xerror.WrapParamErrorWithMsg("llm_config.keys[%d].name length must be between 1 and 128", i)
-			}
-			if _, ok := nameSet[*key.Name]; ok {
-				return xerror.WrapParamErrorWithMsg("duplicate name in llm_config.keys: %s", *key.Name)
-			}
-			nameSet[*key.Name] = struct{}{}
-
-			if key.Weight == nil {
-				return xerror.WrapParamErrorWithMsg("llm_config.keys[%d].weight is required", i)
-			}
-			if *key.Weight < 0 || *key.Weight > 100 {
-				return xerror.WrapParamErrorWithMsg("llm_config.keys[%d].weight must be between 0 and 100", i)
-			}
-			totalWeight += *key.Weight
-		}
-		if totalWeight != 100 {
-			return xerror.WrapParamErrorWithMsg("llm_config.keys total weight must be 100, got %d", totalWeight)
-		}
-	}
-
-	// Validate key_policy
-	if c.KeyPolicy != nil {
-		if c.KeyPolicy.Strategy != nil && *c.KeyPolicy.Strategy != "" && *c.KeyPolicy.Strategy != "weighted_random" {
-			return xerror.WrapParamErrorWithMsg("llm_config.key_policy.strategy must be weighted_random")
-		}
-		if c.KeyPolicy.MaxRetries != nil && *c.KeyPolicy.MaxRetries < 0 {
-			return xerror.WrapParamErrorWithMsg("llm_config.key_policy.max_retries must be >= 0")
-		}
-		if c.KeyPolicy.RetryBackoffInitial != nil && *c.KeyPolicy.RetryBackoffInitial < 0 {
-			return xerror.WrapParamErrorWithMsg("llm_config.key_policy.retry_backoff_initial must be >= 0")
-		}
-		if c.KeyPolicy.RetryBackoffMax != nil && *c.KeyPolicy.RetryBackoffMax < 0 {
-			return xerror.WrapParamErrorWithMsg("llm_config.key_policy.retry_backoff_max must be >= 0")
-		}
-		if c.KeyPolicy.RetryBackoffInitial != nil && c.KeyPolicy.RetryBackoffMax != nil &&
-			*c.KeyPolicy.RetryBackoffMax < *c.KeyPolicy.RetryBackoffInitial {
-			return xerror.WrapParamErrorWithMsg("llm_config.key_policy.retry_backoff_max must be >= retry_backoff_initial")
-		}
-	}
-
-	// Validate key_affinity
-	if c.KeyAffinity != nil {
-		if c.KeyAffinity.TTL != nil && *c.KeyAffinity.TTL <= 0 {
-			return xerror.WrapParamErrorWithMsg("llm_config.key_affinity.ttl must be > 0")
-		}
-		if c.KeyAffinity.RedisPrefix != nil && *c.KeyAffinity.RedisPrefix == "" {
-			return xerror.WrapParamErrorWithMsg("llm_config.key_affinity.redis_prefix must not be empty")
-		}
-	}
-
-	// Validate normalize_upstream_error; the rules mirror the BFE
-	// AIConfCheck exactly so an accepted config never fails BFE loading.
-	if c.NormalizeUpstreamError != nil {
-		nue := c.NormalizeUpstreamError
-		if nue.UnrecognizedAction != nil && *nue.UnrecognizedAction != "" &&
-			*nue.UnrecognizedAction != "passthrough" && *nue.UnrecognizedAction != "rewrite_generic" {
-			return xerror.WrapParamErrorWithMsg(
-				"llm_config.normalize_upstream_error.unrecognized_action must be passthrough or rewrite_generic")
-		}
-		if nue.MaxBodyBytes != nil && (*nue.MaxBodyBytes < 0 || *nue.MaxBodyBytes > 4*1024*1024) {
-			return xerror.WrapParamErrorWithMsg(
-				"llm_config.normalize_upstream_error.max_body_bytes must be between 0 and 4194304")
-		}
-	}
-
-	// Validate prefix stripping configuration
-	if c.StripPrefix != nil && *c.StripPrefix {
-		if c.MatchPrefix == nil || *c.MatchPrefix == "" {
-			return xerror.WrapParamErrorWithMsg("llm_config.match_prefix is required when strip_prefix is true")
-		}
-	}
-	if c.MatchPrefix != nil && *c.MatchPrefix != "" && !strings.HasSuffix(*c.MatchPrefix, "/") {
-		return xerror.WrapParamErrorWithMsg("llm_config.match_prefix must end with '/'")
-	}
-
-	return nil
-}
-
-const (
-	MaxInstanceNameLength = 128
-)
-
-// Instance validates a single instance (used by cluster instance pools).
-func Instance(inst icluster_conf.Instance) error {
-	if inst.Name != "" {
-		if len(inst.Name) < 1 || len(inst.Name) > MaxInstanceNameLength {
-			return xerror.WrapParamErrorWithMsg("instance name length must be between 1 and %d", MaxInstanceNameLength)
-		}
-	}
-	if err := Hostname(inst.Addr); err != nil {
-		return xerror.WrapParamErrorWithMsg("instance addr: %v", err)
-	}
-	if err := Port(inst.Port); err != nil {
-		return xerror.WrapParamErrorWithMsg("instance port: %v", err)
-	}
-	if inst.Weight < 0 || inst.Weight > 100 {
-		return xerror.WrapParamErrorWithMsg("instance weight must be between 0 and 100")
-	}
-	return nil
-}
-
-// InstancePool validates a list of instances.
-func InstancePool(instances []icluster_conf.Instance) error {
-	if len(instances) == 0 {
-		return xerror.WrapParamErrorWithMsg("instance_pool is required")
-	}
-	nameSet := map[string]struct{}{}
-	comboSet := map[string]struct{}{}
-	hasPositiveWeight := false
-	for i, inst := range instances {
-		if err := Instance(inst); err != nil {
-			return xerror.WrapParamErrorWithMsg("instance_pool[%d]: %v", i, err)
-		}
-		if inst.Weight > 0 {
-			hasPositiveWeight = true
-		}
-		if inst.Name != "" {
-			if _, ok := nameSet[inst.Name]; ok {
-				return xerror.WrapParamErrorWithMsg("duplicate instance name: %s", inst.Name)
-			}
-			nameSet[inst.Name] = struct{}{}
-		}
-		key := fmt.Sprintf("%s|%s|%d", inst.Name, inst.Addr, inst.Port)
-		if _, ok := comboSet[key]; ok {
-			return xerror.WrapParamErrorWithMsg("duplicate instance (name=%s, addr=%s, port=%d)", inst.Name, inst.Addr, inst.Port)
-		}
-		comboSet[key] = struct{}{}
-	}
-	if !hasPositiveWeight {
-		return xerror.WrapParamErrorWithMsg("instance_pool must have at least one instance with weight > 0")
-	}
-	return nil
-}

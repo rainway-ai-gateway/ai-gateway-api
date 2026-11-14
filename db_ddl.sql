@@ -468,7 +468,6 @@ CREATE TABLE `providers` (
   `instance_pool` JSON NOT NULL COMMENT '实例池列表（instance_source=instance_pool 时有效）',
   `instance_source` VARCHAR(32) NOT NULL DEFAULT 'instance_pool' COMMENT '实例供给方式：instance_pool（人维护）/ k8s_pool（发现组件维护）',
   `k8s_pool_name` VARCHAR(255) NULL COMMENT '引用的 K8s 实例池名称（instance_source=k8s_pool 时有效）',
-  `k8s_instance_pool` JSON NULL COMMENT 'K8s 实例池只读镜像（系统从 /k8s_pools 同步）',
   `model_protocols` JSON NOT NULL COMMENT '支持的模型协议列表',
   `protocol_paths` JSON COMMENT '按协议的上游路径前缀（protocol -> base path）',
   `time_zone` VARCHAR(255) NOT NULL DEFAULT 'Asia/Shanghai' COMMENT '计算时段所使用的时区',

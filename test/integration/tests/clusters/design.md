@@ -3062,7 +3062,71 @@ URI：`c`
 - 并发（检查项 #10）：本变更为纯配置透传，无 ID 生成/行锁路径，**不适用**，
   不新增 `//go:build mysql` 用例。
 
-## 13. 注意事项
+## 13. 缺价动作配置 `price_miss_action`（issue #1479）
+
+合同依据：`design-docs/api-define/OpenAPI接口定义/clusters.md` LLM 配置表
+`price_miss_action` 行与 `design-docs/modifications/2026-10-30-issue-1479-price-miss-action/api-changes.md`。
+
+本批用例（create：CL-1-121/122/123；update：CL-4-121/122/123）覆盖：
+
+| 编号 | 验证点 | 检查项 |
+|------|--------|--------|
+| CL-1-121 | 三值 `fallback_chat`/`bill_zero`/`reject` 均可创建，GET 回读一致，InnerAPI 导出 `AIConf.PriceMissAction`（snake→Pascal 映射）一致 | #12 导出断言 |
+| CL-1-122 | 省略字段回读为 null，导出为空（bfe 归一为 `fallback_chat`） | 缺省语义 |
+| CL-1-123 | 非法值（`reject_all`）4xx 且**不创建集群**（GET 回读零变更） | #2 4xx 零变更 |
+| CL-4-121 | PATCH 只改无关字段时 `price_miss_action` 原值保留 | #1 省略字段保留 |
+| CL-4-122 | PATCH 整体替换 `llm_config.price_miss_action` 生效 | #3 变更语义 |
+| CL-4-123 | 非法值 PATCH 4xx 后回读零变更 | #2 4xx 零变更 |
+
+### 13.2 设计要点
+
+- 三值是枚举字符串，非法值由 `lib/validate` 拦截（与 bfe `AIConfCheck` 同源），不需要单独的错误码；
+- 导出映射为 snake_case → PascalCase（`price_miss_action` → `PriceMissAction`），未设置为空串；bfe 侧空串归一为 `fallback_chat`（已由 bfe SC42 覆盖三态行为本身）；
+- 纯配置透传：无 ID 生成/行锁路径，检查项 #10（MySQL 并发）不适用，不新增 `//go:build mysql` 用例；
+- 字段随 `llm_config` 整体快照落审计，#7 不单独展开。
+
+## 14. ensure_reasoning_content 用例（2026-11-03 思考模式推理内容补齐）
+
+### 14.1 测试场景总览
+
+| 编号 | 验证点 | 检查项 |
+|------|--------|--------|
+| CL-1-201 | 创建时带 `["openai"]`，GET 回读一致 | 写入与回读 |
+| CL-1-202 | 缺省不配置：回读为 `null`，导出 `AIConf.EnsureReasoningContent` 为 `null` | 缺省语义（bfe 零值 = 关闭） |
+| CL-1-203 | `["openai","anthropic"]` + 双协议 provider：回读与导出均为两元素 | 协议组合、导出取值 |
+| CL-1-204 | `["gemini"]` → 4xx（消息含字段名 + `unsupported protocol`）、不落库、不出现在导出 | #4 值域收敛 + 错误归因 + 防泄漏 |
+| CL-1-205 | `["foo"]`（未知协议）→ 4xx、不落库、不导出 | #4 + 防泄漏 |
+| CL-1-206 | `["openai","openai"]`（重复）→ 4xx、不落库、不导出 | #4 + 防泄漏 |
+| CL-1-207 | provider 仅声明 `openai` 时配 `["anthropic"]` → 4xx `not supported by provider`、不落库、不导出 | #5 正向引用校验 + 防泄漏 |
+| CL-4-201 | PATCH 只改 description：本字段保留 `["openai"]`，且 `provider` / `key_policy.max_retries` 等未提交字段原值不变 | #1 省略字段矩阵 |
+| CL-4-202 | PATCH 显式设置 `["openai","anthropic"]`：回读与 InnerAPI 导出一致 | 变更语义 + #8 导出断言 |
+| CL-4-203 | PATCH 显式 `[]` 清空：回读为空、导出为 null（与 CL-4-201 省略形成对照） | #1 省略 vs 显式空 |
+| CL-4-204 | PATCH `["gemini"]` → 4xx（消息归因）、回读零变更（本字段与同 body 尝试修改的 `max_retries` 均不变） | #3 4xx 回读零变更 |
+| CL-4-205 | provider 收窄 `model_protocols` 且被 cluster 的 `ensure_reasoning_content` 引用 → **409**；provider 与 cluster 回读零变更；导出仍合法 | #5 反向引用 |
+| CL-4-206 | provider 收窄但无 cluster 引用被移除协议 → 200（放宽同） | #5 正向回归 |
+
+### 14.2 设计要点
+
+- 合同依据：`design-docs/api-define/OpenAPI接口定义/clusters.md` 的 `llm_config.ensure_reasoning_content` 行、
+  `InnerAPI接口定义/server-data-conf.md` 的 `AIConf.EnsureReasoningContent` 行，以及
+  `modifications/2026-11-03-cluster-reasoning-content-protocols/`；
+- 双层校验：值域在 `lib/validate`（仅 `openai`/`anthropic`，`gemini` 显式拒绝），provider 交叉在
+  `validateClusterLLMConfigAgainstProvider`（元素 ⊆ provider `model_protocols`）；
+- provider 创建接口强制 `model_protocols` 非空，因此"provider 未声明协议按 `["openai"]`"是防御性分支，
+  无法通过 API 构造，仅由单测覆盖；
+- 导出结构体不带 `omitempty`：未配置时键存在且为 `null`（与 `NormalizeUpstreamError` 实测一致），
+  bfe 反序列化为 nil 即关闭。**本文件的断言按实测产物写，与旧文档"不下发"的措辞不同，以本节为准**；
+- `/clusters` 无 PUT 接口（既有 CL-4-104 已实证 405），检查项 #2 PATCH/PUT 对称性不适用；
+- 检查项 #7（审计）：`llm_config` 随集群变更整体快照落审计，与既有 normalize_upstream_error /
+  price_miss_action 用例口径一致，本组不单独展开；
+- 检查项 #10（MySQL 并发）不适用：纯配置透传，无 ID 生成/行锁路径；
+- **反向引用完整性（CL-4-205/206）**：guard 落地前实测可知 provider 收窄协议不触发任何校验，会产出
+  `ModelProtocols=["openai"]` + `EnsureReasoningContent=["anthropic"]` 的非法导出，bfe `AIConfCheck`
+  拒绝整份 `cluster_conf` 加载（主题版本停在旧版、conf-agent 告警）。实现选择**拒绝**（409）而非级联清理，
+  与 key/model 引用冲突同族；用例见 `tests/clusters/update` 的 CL-4-205/206，单测见
+  `TestProviderProtocolRefChecker`。变更记录：`modifications/2026-11-03-provider-protocol-narrowing-guard/`。
+
+## 15. 注意事项
 
 1. v0.3.0 已删除 `/clusters/{cluster_name}/ready`、`/model-providers`、`/models`。
 2. 返回中不应出现 `ready`、`sub_clusters`、`scheduler`、`Instance.tags`、`llm_config.service_name`、`llm_config.group`。

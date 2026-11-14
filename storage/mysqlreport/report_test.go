@@ -76,9 +76,9 @@ const overviewFields = "SELECT IFNULL(SUM(request_count),0) AS request_total," +
 	"IFNULL(SUM(total_tokens),0) AS total_tokens," +
 	"IFNULL(SUM(all_time_sum),0) AS all_time_sum," +
 	"IFNULL(MAX(all_time_sum/request_count),0) AS latency_max," +
-	"IFNULL(SUM(ttft_us_sum),0) AS ttft_us_sum," +
+	"IFNULL(SUM(CASE WHEN ai_stream=1 THEN ttft_us_sum ELSE 0 END),0) AS ttft_us_sum," +
 	"IFNULL(SUM(CASE WHEN ai_stream=1 THEN request_count ELSE 0 END),0) AS stream_requests," +
-	"IFNULL(SUM(tpot_us_sum),0) AS tpot_us_sum," +
+	"IFNULL(SUM(CASE WHEN ai_stream=1 THEN tpot_us_sum ELSE 0 END),0) AS tpot_us_sum," +
 	"IFNULL(SUM(rate_limit_hits),0) AS rate_limit_hits," +
 	"IFNULL(SUM(auth_reject_count),0) AS auth_rejects," +
 	"IFNULL(SUM(cache_read_tokens),0) AS cache_read_tokens," +
@@ -170,8 +170,8 @@ func TestBuildTimeSeriesSQL_AllMetrics(t *testing.T) {
 		},
 		{
 			ireport.MetricTTFT, 60,
-			"SELECT CAST(FLOOR(TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', ts_min)/60)*60 AS SIGNED) AS time,SUM(ttft_us_sum) AS ttft_us_sum," +
-				"SUM(tpot_us_sum) AS tpot_us_sum,SUM(CASE WHEN ai_stream=1 THEN request_count ELSE 0 END) AS stream_requests" +
+			"SELECT CAST(FLOOR(TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', ts_min)/60)*60 AS SIGNED) AS time,SUM(CASE WHEN ai_stream=1 THEN ttft_us_sum ELSE 0 END) AS ttft_us_sum," +
+				"SUM(CASE WHEN ai_stream=1 THEN tpot_us_sum ELSE 0 END) AS tpot_us_sum,SUM(CASE WHEN ai_stream=1 THEN request_count ELSE 0 END) AS stream_requests" +
 				" FROM bfe_ai_metrics_1m WHERE (ts_min>=? AND ts_min<?) GROUP BY time ORDER BY time ASC",
 		},
 		{
@@ -677,6 +677,56 @@ func (s *fakeRowScanner) Scan(dest ...interface{}) error {
 	return nil
 }
 
+// TestLogWhere_PriceWarn 验证缺价形态过滤进 WHERE（issue #1479）。
+func TestLogWhere_PriceWarn(t *testing.T) {
+	shape := "reject"
+	f := &ireport.LogFilter{
+		Filter:    ireport.Filter{Start: testStart, End: testEnd},
+		PriceWarn: &shape,
+	}
+	query, args, err := buildLogsCountSQL("bfe_ai_request_log", f)
+	require.NoError(t, err)
+	assert.Contains(t, query, "ai_price_warn=?")
+	assert.Equal(t, []interface{}{"reject", testStart, testEnd}, args)
+}
+
+// TestScanLogRow_PriceMissColumns 验证两列缺价字段按投影列序映射到 LogRow：
+// ai_price_miss 的 TINYINT 转 bool，ai_price_warn 原样透传（issue #1479）。
+func TestScanLogRow_PriceMissColumns(t *testing.T) {
+	values := make([]interface{}, len(logRowFields))
+	for i := range values {
+		values[i] = sql.NullString{}
+	}
+	values[0] = sql.NullInt64{Int64: 1, Valid: true}          // logid
+	values[1] = sql.NullInt64{Int64: 1789466410, Valid: true} // log_time
+	// 列序与 logRowFields 一致：cost_value / cost_currency 之后两列。
+	idx := 0
+	for i, field := range logRowFields {
+		if field == "ai_price_miss" {
+			idx = i
+			break
+		}
+	}
+	require.NotZero(t, idx, "ai_price_miss must be in logRowFields")
+	values[idx] = sql.NullInt64{Int64: 1, Valid: true}
+	values[idx+1] = sql.NullString{String: "reject", Valid: true}
+
+	row, err := scanLogRow(&fakeRowScanner{values: values})
+	require.NoError(t, err)
+	require.NotNil(t, row.PriceMiss)
+	assert.True(t, *row.PriceMiss)
+	require.NotNil(t, row.PriceWarn)
+	assert.Equal(t, "reject", *row.PriceWarn)
+
+	// NULL 保持 nil（未发生缺价的行）
+	values[idx] = sql.NullInt64{}
+	values[idx+1] = sql.NullString{}
+	row, err = scanLogRow(&fakeRowScanner{values: values})
+	require.NoError(t, err)
+	assert.Nil(t, row.PriceMiss)
+	assert.Nil(t, row.PriceWarn)
+}
+
 // TestScanLogRow_CacheMirrorIntentColumns 验证明细行扫描：10 个新列按
 // 投影列序映射到 LogRow，TINYINT 列转 bool，NULL 保持 nil。
 func TestScanLogRow_CacheMirrorIntentColumns(t *testing.T) {
@@ -690,16 +740,16 @@ func TestScanLogRow_CacheMirrorIntentColumns(t *testing.T) {
 		values = append(values, sql.NullString{})
 	}
 	values = append(values,
-		sql.NullString{String: "hit", Valid: true},       // ai_cache_status
-		sql.NullInt64{Int64: 1, Valid: true},             // mirror_hit
-		sql.NullString{String: "mirror-bj", Valid: true}, // mirror_cluster
-		sql.NullString{String: "task_type", Valid: true}, // ai_intent_question
-		sql.NullString{String: "coding", Valid: true},    // ai_intent_answer
-		sql.NullFloat64{Float64: 0.95, Valid: true},      // ai_intent_confidence
+		sql.NullString{String: "hit", Valid: true},        // ai_cache_status
+		sql.NullInt64{Int64: 1, Valid: true},              // mirror_hit
+		sql.NullString{String: "mirror-bj", Valid: true},  // mirror_cluster
+		sql.NullString{String: "task_type", Valid: true},  // ai_intent_question
+		sql.NullString{String: "coding", Valid: true},     // ai_intent_answer
+		sql.NullFloat64{Float64: 0.95, Valid: true},       // ai_intent_confidence
 		sql.NullString{String: "classifier", Valid: true}, // ai_intent_source
-		sql.NullInt64{Int64: 1200, Valid: true},          // ai_intent_latency_us
-		sql.NullInt64{Int64: 0, Valid: true},             // ai_intent_cache_hit
-		sql.NullString{String: "v3", Valid: true},        // ai_intent_questions_version
+		sql.NullInt64{Int64: 1200, Valid: true},           // ai_intent_latency_us
+		sql.NullInt64{Int64: 0, Valid: true},              // ai_intent_cache_hit
+		sql.NullString{String: "v3", Valid: true},         // ai_intent_questions_version
 	)
 	require.Len(t, values, len(logRowFields))
 
@@ -744,4 +794,31 @@ func TestScanLogRow_CacheMirrorIntentColumns(t *testing.T) {
 	assert.Nil(t, row.AIIntentConfidence)
 	assert.Nil(t, row.AIIntentLatencyUs)
 	assert.Nil(t, row.AIIntentCacheHit)
+}
+
+// TestTTFTTPOTStreamCaliber pins the stream-only caliber of ttft/tpot on the
+// query side: only rows with ai_stream=1 enter the numerator, so non-stream
+// rows carrying BFE-measured first-byte time no longer inflate the average
+// (ai-gateway-api#315; the job side excludes them at aggregation time).
+func TestTTFTTPOTStreamCaliber(t *testing.T) {
+	overview, _, err := buildOverviewMetricsSQL("bfe_ai_metrics_1m", fullFilter())
+	require.NoError(t, err)
+	assert.Contains(t, overview,
+		"IFNULL(SUM(CASE WHEN ai_stream=1 THEN ttft_us_sum ELSE 0 END),0) AS ttft_us_sum")
+	assert.Contains(t, overview,
+		"IFNULL(SUM(CASE WHEN ai_stream=1 THEN tpot_us_sum ELSE 0 END),0) AS tpot_us_sum")
+	// Denominator caliber is unchanged and numerator has no bare SUM left.
+	assert.Contains(t, overview, "SUM(CASE WHEN ai_stream=1 THEN request_count ELSE 0 END),0) AS stream_requests")
+	assert.NotContains(t, overview, "SUM(ttft_us_sum)")
+	assert.NotContains(t, overview, "SUM(tpot_us_sum)")
+
+	for _, metric := range []string{ireport.MetricTTFT, ireport.MetricTPOT} {
+		ts, _, err := buildTimeSeriesSQL("bfe_ai_metrics_1m", metric, "", &ireport.Filter{Start: testStart, End: testEnd}, 60)
+		require.NoError(t, err)
+		assert.Contains(t, ts, "SUM(CASE WHEN ai_stream=1 THEN ttft_us_sum ELSE 0 END) AS ttft_us_sum")
+		assert.Contains(t, ts, "SUM(CASE WHEN ai_stream=1 THEN tpot_us_sum ELSE 0 END) AS tpot_us_sum")
+		assert.Contains(t, ts, "SUM(CASE WHEN ai_stream=1 THEN request_count ELSE 0 END) AS stream_requests")
+		assert.NotContains(t, ts, "SUM(ttft_us_sum)")
+		assert.NotContains(t, ts, "SUM(tpot_us_sum)")
+	}
 }

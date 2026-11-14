@@ -271,7 +271,8 @@ func (m *QuotaPlanManager) ApplyQuotaPlanChange(ctx context.Context, planID int6
 }
 
 // adjustQuota 在 quota / unit / unlimited 变化时调整 Redis 余额。
-// - quota 变化、单位不变：保留 used，remaining = max(0, newQuota - used)。
+// - quota 变化、单位不变：保留 used，remaining = newQuota - used（不钳零，
+//   可为负；issue #1476 后 used 可大于旧 quota，负值表示新配额仍不足覆盖已用量）。
 // - 新建计划、unit 变化 或 unlimited 切换：used 清零，remaining 置为新配额（unlimited 时用 sentinel）。
 func (m *QuotaPlanManager) adjustQuota(ctx context.Context, planID int64, oldPlan, newPlan *shared.QuotaPlanParam) error {
 	var (
@@ -413,14 +414,15 @@ func (m *QuotaPlanManager) adjustQuota(ctx context.Context, planID int64, oldPla
 
 	for _, owner := range keyOwners {
 		currentRemaining := remainMap[owner.key]
+		// remaining 可为负（issue #1476）：used 如实反映实际消耗、可大于
+		// oldQuota；targetRemaining = newQuota - used 允许为负，负值表示新
+		// 配额仍不足以覆盖已用量（BFE 鉴权继续拒绝）。不再钳零，否则欠费
+		// 会在调额时被凭空抹掉。
 		used := oldQuotaValue - currentRemaining
 		if used < 0 {
-			used = 0
+			used = 0 // 防御：数据异常时兜底
 		}
 		targetRemaining := *newQuota - used
-		if targetRemaining < 0 {
-			targetRemaining = 0
-		}
 		if cacheErr := m.quotaCache.SetRemaining(ctx, owner.key, &targetRemaining, planUnit); cacheErr != nil {
 			stateful.AccessLogger.Warn("failed to set quota cache for owner %s: %v", owner.key, cacheErr)
 		}

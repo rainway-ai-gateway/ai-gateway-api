@@ -32,6 +32,7 @@ import (
 	"github.com/rainway-ai-gateway/ai-gateway-api/endpoints/openapi_v1/epp_pool"
 	"github.com/rainway-ai-gateway/ai-gateway-api/endpoints/openapi_v1/global_route_rules"
 	"github.com/rainway-ai-gateway/ai-gateway-api/endpoints/openapi_v1/intent_config"
+	"github.com/rainway-ai-gateway/ai-gateway-api/endpoints/openapi_v1/k8s_pools"
 	"github.com/rainway-ai-gateway/ai-gateway-api/endpoints/openapi_v1/model_price"
 	"github.com/rainway-ai-gateway/ai-gateway-api/endpoints/openapi_v1/operation_log"
 	"github.com/rainway-ai-gateway/ai-gateway-api/endpoints/openapi_v1/product"
@@ -85,6 +86,7 @@ func endpoints() []*xreq.Endpoint {
 		model_price.Endpoints,
 		operation_log.Endpoints,
 		provider.Endpoints,
+		k8s_pools.Endpoints,
 		batches.Endpoints,
 	)
 

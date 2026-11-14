@@ -16,34 +16,13 @@ package iprovider
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/rainway-ai-gateway/ai-gateway-api/lib"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
-
-func TestEffectiveInstancePool(t *testing.T) {
-	assert.Nil(t, EffectiveInstancePool(nil))
-
-	manual := []ProviderInstance{{Addr: "1.2.3.4", Port: 443, Weight: 100}}
-	mirror := []ProviderInstance{{Addr: "10.0.0.1", Port: 8000, Weight: 100}}
-
-	p := &Provider{InstanceSource: InstanceSourceInstancePool, InstancePool: manual}
-	assert.Equal(t, manual, EffectiveInstancePool(p))
-
-	// Empty/legacy source (rows written before instance_source existed)
-	// resolve to instance_pool as well.
-	p = &Provider{InstancePool: manual}
-	assert.Equal(t, manual, EffectiveInstancePool(p))
-
-	p = &Provider{InstanceSource: InstanceSourceK8sPool, InstancePool: manual, K8sInstancePool: mirror}
-	assert.Equal(t, mirror, EffectiveInstancePool(p))
-
-	// k8s_pool mode with an empty mirror yields a nil (empty) effective pool.
-	p = &Provider{InstanceSource: InstanceSourceK8sPool, InstancePool: manual}
-	assert.Empty(t, EffectiveInstancePool(p))
-}
 
 func TestK8sPoolName(t *testing.T) {
 	valid := []string{"svc-a", "svc_a", "svc.a", "a", "A1-b2.c3_d4"}
@@ -62,11 +41,8 @@ func TestK8sPoolName(t *testing.T) {
 		require.Error(t, K8sPoolName(s), "name %q should be invalid", s)
 	}
 
-	long := make([]byte, MaxK8sPoolNameLength+1)
-	for i := range long {
-		long[i] = 'a'
-	}
-	require.Error(t, K8sPoolName(string(long)))
+	require.NoError(t, K8sPoolName(strings.Repeat("a", MaxK8sPoolNameLength)), "max length name should be valid")
+	require.Error(t, K8sPoolName(strings.Repeat("a", MaxK8sPoolNameLength+1)), "over max length name should be invalid")
 }
 
 func TestValidateProviderParam_InstanceSource(t *testing.T) {
@@ -132,22 +108,6 @@ func TestValidateProviderParam_InstanceSource(t *testing.T) {
 		assert.Contains(t, err.Error(), "invalid instance_source")
 	})
 
-	t.Run("k8s_instance_pool is read-only", func(t *testing.T) {
-		param := base()
-		param.K8sInstancePool = &[]ProviderInstance{{Addr: "10.0.0.1", Port: 8000, Weight: 100}}
-		err := ValidateProviderParam(param)
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "read-only")
-	})
-
-	t.Run("k8s_instance_pool rejected in k8s_pool mode as well", func(t *testing.T) {
-		param := base()
-		param.InstanceSource = lib.PString(InstanceSourceK8sPool)
-		param.K8sPoolName = lib.PString("svc-a")
-		param.K8sInstancePool = &[]ProviderInstance{}
-		require.Error(t, ValidateProviderParam(param))
-	})
-
 	t.Run("k8s_pool_name format enforced in k8s_pool mode", func(t *testing.T) {
 		param := base()
 		param.InstanceSource = lib.PString(InstanceSourceK8sPool)
@@ -164,6 +124,62 @@ func TestValidateProviderParam_InstanceSource(t *testing.T) {
 		param.K8sPoolName = lib.PString("bad name")
 		require.Error(t, ValidateProviderParam(param))
 	})
+}
+
+func TestValidateProviderParam_InstancePoolHostname(t *testing.T) {
+	base := func() *ProviderParam {
+		p := validProviderParam()
+		// two instances with weight 0/100, mirroring the E2E repro shape
+		p.InstancePool = []ProviderInstance{
+			{Addr: "api.deepseek.com", Port: 443, Weight: 0},
+			{Addr: "api.anthropic.com", Port: 443, Weight: 100},
+		}
+		return p
+	}
+
+	t.Run("baseline legal hostnames accepted", func(t *testing.T) {
+		require.NoError(t, ValidateProviderParam(base()))
+	})
+
+	invalidAddrs := []struct {
+		name string
+		addr string
+	}{
+		{"issue repro leading hyphen", "-bad"},
+		{"trailing hyphen", "bad-"},
+		{"empty label", "b..d"},
+		{"label too long", strings.Repeat("a", 64)},
+		{"total too long", strings.Repeat("a.", 128) + "ab"},
+		{"single char", "x"},
+		{"whitespace", "bad addr"},
+		{"underscore not in charset", "bad_addr"},
+	}
+	for _, c := range invalidAddrs {
+		t.Run("rejects "+c.name, func(t *testing.T) {
+			param := base()
+			param.InstancePool[0].Addr = c.addr
+			err := ValidateProviderParam(param)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "instance addr")
+		})
+	}
+
+	validAddrs := []struct {
+		name string
+		addr string
+	}{
+		{"hostname", "api.example.com"},
+		{"shortest legal", "a1"},
+		{"ipv4 literal", "1.2.3.4"},
+		{"ipv6 literal", "2001:db8::1"},
+	}
+	for _, c := range validAddrs {
+		t.Run("accepts "+c.name, func(t *testing.T) {
+			param := base()
+			param.InstancePool[0].Addr = c.addr
+			require.NoError(t, ValidateProviderParam(param))
+		})
+	}
 }
 
 func TestFillDefaults_InstanceSource(t *testing.T) {
@@ -189,28 +205,24 @@ func TestApplyProviderUpdate_InstanceSource(t *testing.T) {
 		updated := applyProviderUpdate(existing, &ProviderParam{})
 		assert.Equal(t, InstanceSourceInstancePool, updated.InstanceSource)
 		assert.Nil(t, updated.K8sPoolName)
-		assert.Nil(t, updated.K8sInstancePool)
 	})
 
 	t.Run("explicit fields applied", func(t *testing.T) {
 		poolName := "svc-a"
-		mirror := []ProviderInstance{{Addr: "10.0.0.1", Port: 8000, Weight: 100}}
 		updated := applyProviderUpdate(existing, &ProviderParam{
-			InstanceSource:  lib.PString(InstanceSourceK8sPool),
-			K8sPoolName:     &poolName,
-			K8sInstancePool: &mirror,
+			InstanceSource: lib.PString(InstanceSourceK8sPool),
+			K8sPoolName:    &poolName,
 		})
 		assert.Equal(t, InstanceSourceK8sPool, updated.InstanceSource)
 		require.NotNil(t, updated.K8sPoolName)
 		assert.Equal(t, "svc-a", *updated.K8sPoolName)
-		assert.Equal(t, mirror, updated.K8sInstancePool)
 	})
 }
 
 func TestProviderManager_UpdateProvider_InstanceSourceHook(t *testing.T) {
 	ctx := context.Background()
 
-	t.Run("mode switch to k8s_pool triggers hook via effective pool change", func(t *testing.T) {
+	t.Run("mode switch to k8s_pool triggers hook", func(t *testing.T) {
 		store := &fakeProviderStorager{
 			fetchFn: func(ctx context.Context, filter *ProviderFilter) (*Provider, error) {
 				return &Provider{
@@ -239,18 +251,16 @@ func TestProviderManager_UpdateProvider_InstanceSourceHook(t *testing.T) {
 		require.Equal(t, 1, hookCalled)
 		require.NotNil(t, hookNew)
 		assert.Equal(t, InstanceSourceK8sPool, hookNew.InstanceSource)
-		assert.Empty(t, EffectiveInstancePool(hookNew))
 	})
 
 	t.Run("mode switch back to instance_pool triggers hook", func(t *testing.T) {
 		store := &fakeProviderStorager{
 			fetchFn: func(ctx context.Context, filter *ProviderFilter) (*Provider, error) {
 				return &Provider{
-					Name:            "deepseek",
-					InstanceSource:  InstanceSourceK8sPool,
-					K8sPoolName:     lib.PString("svc-a"),
-					InstancePool:    []ProviderInstance{{Addr: "1.2.3.4", Port: 443, Weight: 100}},
-					K8sInstancePool: []ProviderInstance{{Addr: "10.0.0.1", Port: 8000, Weight: 100}},
+					Name:           "deepseek",
+					InstanceSource: InstanceSourceK8sPool,
+					K8sPoolName:    lib.PString("svc-a"),
+					InstancePool:   []ProviderInstance{{Addr: "1.2.3.4", Port: 443, Weight: 100}},
 				}, nil
 			},
 		}
@@ -271,19 +281,17 @@ func TestProviderManager_UpdateProvider_InstanceSourceHook(t *testing.T) {
 	})
 
 	t.Run("dormant instance_pool change in k8s_pool mode does not trigger hook", func(t *testing.T) {
-		mirror := []ProviderInstance{{Addr: "10.0.0.1", Port: 8000, Weight: 100}}
 		param := validProviderParam()
 		store := &fakeProviderStorager{
 			fetchFn: func(ctx context.Context, filter *ProviderFilter) (*Provider, error) {
 				return &Provider{
-					Name:            "deepseek",
-					Models:          param.Models,
-					Keys:            param.Keys,
-					InstanceSource:  InstanceSourceK8sPool,
-					K8sPoolName:     lib.PString("svc-a"),
-					InstancePool:    []ProviderInstance{{Addr: "1.2.3.4", Port: 443, Weight: 100}},
-					K8sInstancePool: mirror,
-					ModelProtocols:  param.ModelProtocols,
+					Name:           "deepseek",
+					Models:         param.Models,
+					Keys:           param.Keys,
+					InstanceSource: InstanceSourceK8sPool,
+					K8sPoolName:    lib.PString("svc-a"),
+					InstancePool:   []ProviderInstance{{Addr: "1.2.3.4", Port: 443, Weight: 100}},
+					ModelProtocols: param.ModelProtocols,
 				}, nil
 			},
 		}
@@ -302,58 +310,35 @@ func TestProviderManager_UpdateProvider_InstanceSourceHook(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, 0, hookCalled)
 	})
-}
 
-// TestProviderManager_UpdateProvider_MirrorLifecycle pins the mirror
-// lifecycle edge: the read-only k8s_instance_pool mirror is cleared when the
-// merged instance_source resolves to instance_pool, and left untouched
-// otherwise (the /k8s_pools fan-out is the only writer that refreshes it).
-func TestProviderManager_UpdateProvider_MirrorLifecycle(t *testing.T) {
-	ctx := context.Background()
-
-	newK8sProviderStore := func(updatedParam **ProviderParam) *fakeProviderStorager {
-		return &fakeProviderStorager{
+	t.Run("k8s_pool_name A to B in k8s mode does not trigger hook", func(t *testing.T) {
+		param := validProviderParam()
+		store := &fakeProviderStorager{
 			fetchFn: func(ctx context.Context, filter *ProviderFilter) (*Provider, error) {
 				return &Provider{
-					Name:            "deepseek",
-					InstanceSource:  InstanceSourceK8sPool,
-					K8sPoolName:     lib.PString("svc-a"),
-					InstancePool:    []ProviderInstance{{Addr: "1.2.3.4", Port: 443, Weight: 100}},
-					K8sInstancePool: []ProviderInstance{{Addr: "10.0.0.1", Port: 8000, Weight: 100}},
-					ModelProtocols:  []string{"openai"},
+					Name:           "deepseek",
+					Models:         param.Models,
+					Keys:           param.Keys,
+					InstanceSource: InstanceSourceK8sPool,
+					K8sPoolName:    lib.PString("pool-a"),
+					InstancePool:   []ProviderInstance{{Addr: "1.2.3.4", Port: 443, Weight: 100}},
+					ModelProtocols: param.ModelProtocols,
 				}, nil
 			},
-			updateFn: func(ctx context.Context, name string, param *ProviderParam) error {
-				*updatedParam = param
-				return nil
-			},
 		}
-	}
+		m := NewProviderManager(&fakeTxn{}, store)
 
-	t.Run("switch to instance_pool mode clears the synced mirror", func(t *testing.T) {
-		var updatedParam *ProviderParam
-		m := NewProviderManager(&fakeTxn{}, newK8sProviderStore(&updatedParam))
+		hookCalled := 0
+		hook := func(ctx context.Context, oldProvider, newProvider *Provider) error {
+			hookCalled++
+			return nil
+		}
 
-		param := validProviderParam()
-		param.InstanceSource = lib.PString(InstanceSourceInstancePool)
-		require.NoError(t, m.UpdateProvider(ctx, "deepseek", param))
-
-		require.NotNil(t, updatedParam)
-		require.NotNil(t, updatedParam.K8sInstancePool, "mirror must be explicitly cleared, not nil-skip")
-		assert.Empty(t, *updatedParam.K8sInstancePool)
-	})
-
-	t.Run("k8s_pool mode update leaves the mirror for the fan-out", func(t *testing.T) {
-		var updatedParam *ProviderParam
-		m := NewProviderManager(&fakeTxn{}, newK8sProviderStore(&updatedParam))
-
-		param := validProviderParam()
 		param.InstanceSource = lib.PString(InstanceSourceK8sPool)
-		param.K8sPoolName = lib.PString("svc-a")
+		param.K8sPoolName = lib.PString("pool-b")
 		param.InstancePool = nil
-		require.NoError(t, m.UpdateProvider(ctx, "deepseek", param))
-
-		require.NotNil(t, updatedParam)
-		assert.Nil(t, updatedParam.K8sInstancePool, "mirror refresh stays exclusive to the /k8s_pools fan-out")
+		err := m.UpdateProvider(ctx, "deepseek", param, hook)
+		require.NoError(t, err)
+		assert.Equal(t, 0, hookCalled, "placeholder row is unchanged, the exporter reads the new pool at export time")
 	})
 }

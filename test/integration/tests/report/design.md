@@ -20,7 +20,7 @@
 | RP-2 | 时序数据 | GET | `/open-api/v1/report/timeseries` | `metric=qps\|tokens\|latency\|ttft\|tpot\|cost\|cache_tokens`（cache_tokens 按 kind 分序列）；可选 `dimension=ai_intent_answer\|ai_cache_status\|mirror_hit`（仅 mysql 后端，doris 422） |
 | RP-3 | 维度排行 | GET | `/open-api/v1/report/rankings` | `dimension=model\|requested_model\|provider\|apikey\|host\|status\|protocol\|mode`（+ `ai_intent_answer\|ai_cache_status\|mirror_hit`，仅 mysql），按 request_count 降序 |
 | RP-4 | 占比分布 | GET | `/open-api/v1/report/distribution` | `dimension=status\|protocol\|mode\|stream`（+ 上述三个新维度，仅 mysql），空维度归一为 `unknown` |
-| RP-5 | 日志明细 | GET | `/open-api/v1/report/logs` | 按 log_time 倒序分页，支持 err_only/keyword/requested_models 及 `cache_status`/`mirror_hit`/`intent_question`/`intent_answer`/`intent_source` 精确过滤（两后端均可用） |
+| RP-5 | 日志明细 | GET | `/open-api/v1/report/logs` | 按 log_time 倒序分页，支持 err_only/keyword/requested_models 及 `cache_status`/`mirror_hit`/`intent_question`/`intent_answer`/`intent_source`/`price_warn` 精确过滤（两后端均可用）；明细行新增 `ai_price_miss`/`ai_price_warn` 两列（issue #1479，列见 `db_ddl_report_mysql.sql`） |
 
 ## 3. 测试用例统计
 
@@ -32,7 +32,7 @@
 | rankings（model/status/limit/三个新维度） | B | 6 |
 | distribution（status/protocol+unknown/三个新维度） | B | 5 |
 | logs（分页/过滤/行形状/requested_models/page_size 封顶/新五参数过滤/新列行形状） | B | 7 |
-| 参数校验（422，含 mirror_hit/intent_source/timeseries 维度白名单） | B | 8（子用例+3） |
+| 参数校验（422，含 mirror_hit/intent_source/price_warn/timeseries 维度白名单） | B | 9（子用例+4） |
 | doris 后端新维度门控 422 + 明细能力放行 | B | 2 |
 | 启动即建分区（两表同验） | C | 1 |
 | 覆盖期内写入成功 | C | 1 |
@@ -84,6 +84,8 @@ go test -v -count=1 ./tests/report/not_assembled/
 ## 7. 组 B：五端点真实数据（query）
 
 ### 7.1 环境门控与数据源
+
+> issue #1479：明细表新增 `ai_price_miss`/`ai_price_warn` 两列，`/logs` 增加 `price_warn` 精确过滤（取值白名单 fallback/no_entry/no_baseline/reject/subitem_missing/no_model_table）。本批**只新增非法值 422 用例**（`invalid_price_warn`），正向过滤口径由单元测试 `TestLogWhere_PriceWarn` 锁定、端到端正向用例待各后端种子统一补列后追加（与缓存/镜像/意图字段当时的分批策略一致）。
 
 - 环境变量 `REPORT_MYSQL_DSN`：`user:pass@tcp(host:port)/` 格式（参照 log-reader LR03 的 `LR_MYSQL_DSN` 约定，库名段可省略，不使用其中自带的库名）。
 - **未设置时**：`TestMain` 打印设置说明后以 0 退出（等价全组 Skip）；单条用例不执行。

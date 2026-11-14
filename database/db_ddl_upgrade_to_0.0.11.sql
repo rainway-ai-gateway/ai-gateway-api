@@ -38,8 +38,10 @@ ALTER TABLE `providers`
   ADD COLUMN `instance_source` VARCHAR(32) NOT NULL DEFAULT 'instance_pool' COMMENT '实例供给方式：instance_pool（人维护）/ k8s_pool（发现组件维护）';
 ALTER TABLE `providers`
   ADD COLUMN `k8s_pool_name` VARCHAR(255) NULL COMMENT '引用的 K8s 实例池名称（instance_source=k8s_pool 时有效）';
-ALTER TABLE `providers`
-  ADD COLUMN `k8s_instance_pool` JSON NULL COMMENT 'K8s 实例池只读镜像（系统从 /k8s_pools 同步）';
+-- 注：k8s_instance_pool 镜像列随实时解析改造（2026-10-27，见
+-- design-docs/modifications/2026-10-27-k8s-pool-realtime-resolution/）彻底删除，
+-- 不再执行 ADD COLUMN；若预览版库已建该列，请手动 DROP：
+-- ALTER TABLE `providers` DROP COLUMN `k8s_instance_pool`;
 
 -- 1.5 rate_limit_policies：批量限流配置（2026-10-07 批量任务支持）
 ALTER TABLE `rate_limit_policies`

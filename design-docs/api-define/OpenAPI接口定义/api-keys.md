@@ -298,7 +298,7 @@
 | 参数名 | 类型 | 参数含义 | 补充描述 |
 | - | - | - | - |
 | list | []APIKey | API-Key列表 | 元素字段同2.1数据模型，`quota_plan`中包含`balance`字段（含`used`和`remaining`） |
-| pagination | object | 分页信息 | 包含`page`、`page_size`、`total` |
+| pagination | object | 分页信息 | 包含`page`、`page_size`、`total`；未传分页参数时为 `page=1`、`page_size=20`；`total` 为满足 `enabled`/`entity_id`/`unlimited_quota` 过滤条件的总条数 |
 
 ---
 
@@ -358,7 +358,7 @@
 **执行逻辑**
 
 1. 若传入新的 `quota_plan`：
-   - 若 `quota_plan.unlimited` 为 `false`，且 `quota` 的值发生了改变（单位不变）：保留 `balance.used`，按 `balance.remaining = max(0, 新quota - balance.used)` 调整余额，并同步调整 Redis 剩余量。
+   - 若 `quota_plan.unlimited` 为 `false`，且 `quota` 的值发生了改变（单位不变）：保留 `balance.used`，按 `balance.remaining = 新quota - balance.used` 调整余额，并同步调整 Redis 剩余量。**不再对结果钳零**（issue #1476）：`balance.used` 可大于旧 `quota`（欠费），此时 `remaining` 可为负——负值表示新配额仍不足以覆盖已用量，BFE 鉴权继续拒绝（剩余量对外展示仍为 0，见 [00-common.md](./00-common.md) balance 结构）。
    - 若 `quota_plan.unit` 发生变化（如 `total_token` ↔ `RMB`）：由于新旧单位无法直接换算，对 balance 进行重置（remaining = 新的quota，used = 0），并将 Redis 剩余量重置为新的quota。
    - 若 `quota_plan.unlimited` 由 `true` 改为 `false`：创建新的 balance（remaining = quota，used = 0），并将 Redis 剩余量重置为 quota。
    - 若 `quota_plan.unlimited` 由 `false` 改为 `true`：将 balance 置为无限制状态（used = 0，remaining = 一个足够大的 sentinel 值），并将 Redis 剩余量重置为 sentinel。

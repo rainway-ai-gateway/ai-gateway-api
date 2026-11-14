@@ -58,7 +58,6 @@ CREATE TABLE providers (
   instance_pool TEXT NOT NULL,
   instance_source TEXT NOT NULL DEFAULT 'instance_pool',
   k8s_pool_name TEXT,
-  k8s_instance_pool TEXT,
   model_protocols TEXT NOT NULL,
   protocol_paths TEXT,
   time_zone TEXT NOT NULL DEFAULT 'Asia/Shanghai',

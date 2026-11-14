@@ -21,6 +21,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/rainway-ai-gateway/ai-gateway-api/lib"
+	"github.com/rainway-ai-gateway/ai-gateway-api/lib/xerror"
 	"github.com/rainway-ai-gateway/ai-gateway-api/model/itxn"
 )
 
@@ -84,7 +86,7 @@ type ConfigGenerator func(ctx context.Context) (*ExportData, error)
 func (vcm *VersionControlManager) ExportConfig(ctx context.Context, configTopic string,
 	generaotr ConfigGenerator) (lrv *ExportData, err error) {
 
-	err = vcm.txn.AtomExecute(ctx, func(ctx context.Context) error {
+	err = itxn.ExecuteWithRetry(ctx, vcm.txn, func(ctx context.Context) error {
 		lrv, err = generaotr(ctx)
 		if err != nil {
 			return err
@@ -101,6 +103,13 @@ func (vcm *VersionControlManager) ExportConfig(ctx context.Context, configTopic 
 
 		lrv.version, err = vcm.storager.UpsertConfigLastExportedVersion(ctx, lrv)
 		if err != nil {
+			// Duplicate-key retries exhausted (theoretical under the
+			// FOR UPDATE pin, see issue #318): surface a distinguishable
+			// 409 Conflict instead of an indistinguishable 500. Any other
+			// error keeps its original semantics.
+			if lib.DuplicateEntryError(err) {
+				return xerror.WrapConflictErrorWithMsg("export version conflict after retries: %v", err)
+			}
 			return err
 		}
 

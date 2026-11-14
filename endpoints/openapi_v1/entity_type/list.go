@@ -45,22 +45,10 @@ func EntityTypeListAction(req *http.Request) (interface{}, error) {
 		return nil, err
 	}
 
-	var page, pageSize int
-	isPagination := filter.Page != nil || filter.PageSize != nil
-	if isPagination {
-		page = 1
-		if filter.Page != nil && *filter.Page > 0 {
-			page = *filter.Page
-		}
-
-		pageSize = 20
-		if filter.PageSize != nil && *filter.PageSize > 0 {
-			pageSize = *filter.PageSize
-		}
-		if pageSize > 100 {
-			pageSize = 100
-		}
-
+	// 未传 page/page_size 时表示「返回全部匹配记录」（entity-types.md §2.2，语义同 /providers）；
+	// 空串参数（?page= / ?page_size=）按未传处理。
+	page, pageSize, paginated := xreq.OptionalPagination(req.URL.Query(), filter.Page, filter.PageSize)
+	if paginated {
 		filter.Page = &page
 		filter.PageSize = &pageSize
 	}
@@ -71,17 +59,23 @@ func EntityTypeListAction(req *http.Request) (interface{}, error) {
 	}
 
 	total := len(list)
-	if isPagination {
-		countFilter := &entity.EntityTypeFilter{
-			ID:       filter.ID,
-			TypeName: filter.TypeName,
-			Level:    filter.Level,
-		}
-		allList, err := container.EntityTypeManager.FetchEntityTypeList(req.Context(), countFilter)
+	if paginated {
+		// total counts the whole filtered collection; reuse the same filters so it
+		// never drifts from list (issue #303).
+		countFilter := *filter
+		countFilter.Page = nil
+		countFilter.PageSize = nil
+		allList, err := container.EntityTypeManager.FetchEntityTypeList(req.Context(), &countFilter)
 		if err != nil {
 			return nil, err
 		}
 		total = len(allList)
+	} else if total > 0 {
+		pageSize = total // page_size=total，与 /providers 一致；空集合保持 0
+	}
+
+	if list == nil {
+		list = []*entity.EntityTypeParam{} // 空集合返回 []，不要返回 null
 	}
 
 	resp := &EntityTypeListResponse{

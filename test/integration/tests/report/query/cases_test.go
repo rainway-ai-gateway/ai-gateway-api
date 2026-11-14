@@ -40,25 +40,28 @@ func getJSON(t *testing.T, path string, query map[string]string, out interface{}
 }
 
 // TestOverview 验证总览指标卡：聚合表合计 + 成本分组 + 明细 COUNT 全部精确等于手算值。
+// 行 F（非流式但 ttft_us_sum=40000，issue #315 污染复现行）计入全量口径
+// （request_total=680），但不得进入 ttft/tpot 流式口径分子。
 func TestOverview(t *testing.T) {
 	var data overviewData
 	getJSON(t, reportPrefix+"/overview", windowQuery(), &data)
 
-	assert.Equal(t, int64(660), data.RequestTotal)
+	assert.Equal(t, int64(680), data.RequestTotal)
 	assert.Equal(t, int64(200), data.ErrorTotal)
-	assert.InDelta(t, 200.0/660.0, data.ErrorRate, 1e-9)
+	assert.InDelta(t, 200.0/680.0, data.ErrorRate, 1e-9)
 	assert.Equal(t, int64(6600), data.InputTokens)
 	assert.Equal(t, int64(1320), data.OutputTokens)
 	assert.Equal(t, int64(7920), data.TotalTokens)
 
-	// latency_avg = all_time_sum/request_total = 66000/660 = 100ms；
+	// latency_avg = all_time_sum/request_total = 68000/680 = 100ms；
 	// latency_max = MAX(all_time_sum/request_count)（各组均 100ms）。
 	assert.InDelta(t, 100, data.LatencyAvgMs, 1e-9)
 	assert.InDelta(t, 100, data.LatencyMaxMs, 1e-9)
 	// MySQL 后端不返回分位数，字段恒不存在。
 	assert.Nil(t, data.LatencyP50Ms)
 
-	// ttft/tpot 聚合于 stream 请求（450 个），微秒→毫秒。
+	// ttft/tpot 聚合于 stream 请求（450 个），微秒→毫秒；行 F 的
+	// 40000us 首包延迟（非流式）不得计入分子（issue #315）。
 	assert.InDelta(t, 225000.0/450/1000, data.TtftAvgMs, 1e-9) // 0.5ms
 	assert.InDelta(t, 22500.0/450/1000, data.TpotAvgMs, 1e-9)  // 0.05ms
 
@@ -118,7 +121,7 @@ func TestTimeSeries_QPS(t *testing.T) {
 
 	assert.Equal(t, epoch("2026-09-15 10:01:00"), data.Series[1].Time)
 	require.NotNil(t, data.Series[1].Value)
-	assert.InDelta(t, 1, *data.Series[1].Value, 1e-9) // 60/60
+	assert.InDelta(t, 80.0/60, *data.Series[1].Value, 1e-9) // (50+10+20)/60，含行 F
 }
 
 // TestTimeSeries_Tokens 验证 tokens 时序的多值字段（个/秒）。
@@ -135,6 +138,32 @@ func TestTimeSeries_Tokens(t *testing.T) {
 	assert.InDelta(t, 10, *data.Series[1].Input, 1e-9)  // 600/60
 	assert.InDelta(t, 2, *data.Series[1].Output, 1e-9)  // 120/60
 	assert.InDelta(t, 12, *data.Series[1].Total, 1e-9)  // 720/60
+}
+
+// TestTimeSeries_TTFTTPOT 验证 ttft/tpot 时序的流式口径（issue #315）：
+// 每桶 value = 桶内 ai_stream=1 行的 ttft_us_sum 合计 ÷ 流式请求数 ÷ 1000；
+// 行 F（10:01 桶内非流式、ttft_us_sum=40000）不得计入分子。
+func TestTimeSeries_TTFTTPOT(t *testing.T) {
+	for _, tc := range []struct {
+		metric   string
+		bucket00 float64 // 10:00：(50000+150000)/(100+300)/1000
+		bucket01 float64 // 10:01：25000/50/1000（不含行 F 的 40000）
+	}{
+		{"ttft", 0.5, 0.5},
+		{"tpot", 0.05, 0.05},
+	} {
+		var data timeseriesData
+		getJSON(t, reportPrefix+"/timeseries", with(windowQuery(), "metric", tc.metric), &data)
+
+		assert.Equal(t, 60, data.BucketSec)
+		require.Len(t, data.Series, 2)
+		assert.Equal(t, epoch("2026-09-15 10:00:00"), data.Series[0].Time)
+		require.NotNil(t, data.Series[0].Value)
+		assert.InDelta(t, tc.bucket00, *data.Series[0].Value, 1e-9)
+		assert.Equal(t, epoch("2026-09-15 10:01:00"), data.Series[1].Time)
+		require.NotNil(t, data.Series[1].Value)
+		assert.InDelta(t, tc.bucket01, *data.Series[1].Value, 1e-9)
+	}
 }
 
 // TestTimeSeries_Cost 验证成本时序：金额/秒口径（定点值 ÷ 桶宽 ÷ 1e8），
@@ -170,7 +199,7 @@ func TestRankings_Model(t *testing.T) {
 	var data rankingsData
 	getJSON(t, reportPrefix+"/rankings", with(windowQuery(), "dimension", "model"), &data)
 
-	require.Len(t, data.Items, 3)
+	require.Len(t, data.Items, 4)
 	assert.Equal(t, "gpt-4o", data.Items[0].Name)
 	assert.Equal(t, int64(350), data.Items[0].RequestCount)
 	assert.Equal(t, int64(200), data.Items[0].ErrorCount)
@@ -180,8 +209,11 @@ func TestRankings_Model(t *testing.T) {
 	assert.Equal(t, "gpt-4", data.Items[1].Name)
 	assert.Equal(t, int64(300), data.Items[1].RequestCount)
 
-	assert.Equal(t, "claude", data.Items[2].Name)
-	assert.Equal(t, int64(10), data.Items[2].RequestCount)
+	assert.Equal(t, "llama-3", data.Items[2].Name) // 行 F
+	assert.Equal(t, int64(20), data.Items[2].RequestCount)
+
+	assert.Equal(t, "claude", data.Items[3].Name)
+	assert.Equal(t, int64(10), data.Items[3].RequestCount)
 }
 
 // TestRankings_Status 验证状态码维度排行：数字维度以字符串名返回。
@@ -191,7 +223,7 @@ func TestRankings_Status(t *testing.T) {
 
 	require.Len(t, data.Items, 2)
 	assert.Equal(t, "200", data.Items[0].Name)
-	assert.Equal(t, int64(460), data.Items[0].RequestCount)
+	assert.Equal(t, int64(480), data.Items[0].RequestCount)
 	assert.Equal(t, "500", data.Items[1].Name)
 	assert.Equal(t, int64(200), data.Items[1].RequestCount)
 }
@@ -204,7 +236,7 @@ func TestRankings_Limit(t *testing.T) {
 
 	var defaultLimit rankingsData
 	getJSON(t, reportPrefix+"/rankings", with(windowQuery(), "dimension", "model"), &defaultLimit)
-	require.Len(t, defaultLimit.Items, 3) // 种子只有 3 组，默认 limit=10 全量返回
+	require.Len(t, defaultLimit.Items, 4) // 种子共 4 组，默认 limit=10 全量返回
 }
 
 // TestDistribution_Status 验证状态码分布：ratio 合计≈1。
@@ -220,10 +252,10 @@ func TestDistribution_Status(t *testing.T) {
 
 	require.Contains(t, byName, "200")
 	require.Contains(t, byName, "500")
-	assert.Equal(t, int64(460), byName["200"].RequestCount)
-	assert.InDelta(t, 460.0/660.0, byName["200"].Ratio, 1e-9)
+	assert.Equal(t, int64(480), byName["200"].RequestCount)
+	assert.InDelta(t, 480.0/680.0, byName["200"].Ratio, 1e-9)
 	assert.Equal(t, int64(200), byName["500"].RequestCount)
-	assert.InDelta(t, 200.0/660.0, byName["500"].Ratio, 1e-9)
+	assert.InDelta(t, 200.0/680.0, byName["500"].Ratio, 1e-9)
 	assert.InDelta(t, 1, byName["200"].Ratio+byName["500"].Ratio, 1e-9)
 }
 
@@ -232,17 +264,19 @@ func TestDistribution_Protocol_UnknownBucket(t *testing.T) {
 	var data distributionData
 	getJSON(t, reportPrefix+"/distribution", with(windowQuery(), "dimension", "protocol"), &data)
 
-	require.Len(t, data.Items, 2)
+	require.Len(t, data.Items, 3)
 	byName := map[string]distItem{}
 	for _, one := range data.Items {
 		byName[one.Name] = one
 	}
 
 	require.Contains(t, byName, "openai")
+	require.Contains(t, byName, "anthropic") // 行 F
 	require.Contains(t, byName, "unknown")
 	assert.Equal(t, int64(650), byName["openai"].RequestCount)
+	assert.Equal(t, int64(20), byName["anthropic"].RequestCount)
 	assert.Equal(t, int64(10), byName["unknown"].RequestCount)
-	assert.InDelta(t, 10.0/660.0, byName["unknown"].Ratio, 1e-9)
+	assert.InDelta(t, 10.0/680.0, byName["unknown"].Ratio, 1e-9)
 }
 
 // TestLogs_Paging 验证明细分页：total、page_size 生效、log_time 倒序。
@@ -412,7 +446,7 @@ func TestTimeSeries_Dimension(t *testing.T) {
 		"metric", "qps", "dimension", "ai_cache_status"), &data)
 
 	assert.Equal(t, 60, data.BucketSec)
-	// 10:00：hit(A+C=400)、miss(B=200)；10:01：hit(D=50)、''(E=10)。
+	// 10:00：hit(A+C=400)、miss(B=200)；10:01：hit(D=50)、''(E+F=30)。
 	require.Len(t, data.Series, 4)
 
 	type pointKey struct {
@@ -427,7 +461,7 @@ func TestTimeSeries_Dimension(t *testing.T) {
 	assert.InDelta(t, 400.0/60, byKey[pointKey{epoch("2026-09-15 10:00:00"), "hit"}], 1e-9)
 	assert.InDelta(t, 200.0/60, byKey[pointKey{epoch("2026-09-15 10:00:00"), "miss"}], 1e-9)
 	assert.InDelta(t, 50.0/60, byKey[pointKey{epoch("2026-09-15 10:01:00"), "hit"}], 1e-9)
-	assert.InDelta(t, 10.0/60, byKey[pointKey{epoch("2026-09-15 10:01:00"), ""}], 1e-9)
+	assert.InDelta(t, 30.0/60, byKey[pointKey{epoch("2026-09-15 10:01:00"), ""}], 1e-9)
 }
 
 // TestTimeSeries_InvalidDimension 验证 timeseries dimension 白名单：既有维度
@@ -463,7 +497,7 @@ func TestRankings_MirrorHit(t *testing.T) {
 
 	require.Len(t, data.Items, 2)
 	assert.Equal(t, "0", data.Items[0].Name)
-	assert.Equal(t, int64(510), data.Items[0].RequestCount) // B+C+E
+	assert.Equal(t, int64(530), data.Items[0].RequestCount) // B+C+E+F
 	assert.Equal(t, "1", data.Items[1].Name)
 	assert.Equal(t, int64(150), data.Items[1].RequestCount) // A+D
 }
@@ -496,9 +530,9 @@ func TestDistribution_CacheStatus(t *testing.T) {
 		byName[one.Name] = one
 	}
 	assert.Equal(t, int64(450), byName["hit"].RequestCount)
-	assert.InDelta(t, 450.0/660.0, byName["hit"].Ratio, 1e-9)
+	assert.InDelta(t, 450.0/680.0, byName["hit"].Ratio, 1e-9)
 	assert.Equal(t, int64(200), byName["miss"].RequestCount)
-	assert.Equal(t, int64(10), byName["unknown"].RequestCount) // 行 E 的空值
+	assert.Equal(t, int64(30), byName["unknown"].RequestCount) // 行 E+F 的空值
 	assert.InDelta(t, 1, byName["hit"].Ratio+byName["miss"].Ratio+byName["unknown"].Ratio, 1e-9)
 }
 
@@ -512,9 +546,9 @@ func TestDistribution_MirrorHit(t *testing.T) {
 	for _, one := range data.Items {
 		byName[one.Name] = one
 	}
-	assert.Equal(t, int64(510), byName["0"].RequestCount)
+	assert.Equal(t, int64(530), byName["0"].RequestCount)
 	assert.Equal(t, int64(150), byName["1"].RequestCount)
-	assert.InDelta(t, 150.0/660.0, byName["1"].Ratio, 1e-9)
+	assert.InDelta(t, 150.0/680.0, byName["1"].Ratio, 1e-9)
 }
 
 // TestLogs_CacheMirrorIntentFilters 验证五个新过滤参数的端到端过滤口径。
@@ -646,6 +680,7 @@ func TestParamValidation(t *testing.T) {
 		{"keyword_too_long", "/logs", with(windowQuery(), "keyword", longKeyword)},
 		{"invalid_mirror_hit", "/logs", with(windowQuery(), "mirror_hit", "not-bool")},
 		{"invalid_intent_source", "/logs", with(windowQuery(), "intent_source", "bogus")},
+		{"invalid_price_warn", "/logs", with(windowQuery(), "price_warn", "bogus")},
 		{"invalid_timeseries_dimension", "/timeseries", with(windowQuery(), "metric", "qps", "dimension", "model")},
 		// issue #233：stream 非法布尔值（共有过滤项 tag 绑定路径）五个端点全部 422
 		{"invalid_stream_overview", "/overview", with(windowQuery(), "stream", "not-bool")},

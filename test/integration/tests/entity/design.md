@@ -124,6 +124,12 @@ entity/
 | E-1-008 | 创建层级 Entity（非法 parent level） | 异常参数 | 父 level 必须小于子 |
 | E-1-009 | type 格式非法（含大写） | 合法性条件 | 验证 ErrNum=422 |
 | E-1-010 | Entity name 包含首尾空白 | 合法性条件 | 验证 ErrNum=422 |
+| E-1-011 | 创建 Entity 并指定 RMB 配额 | 正常参数 | `quota=5555.5555`，回读余额一致 |
+| E-1-029 | Entity RMB 配额两位小数 | 边界值 | `quota=0.28`（issue #293 回归锚点，修复前必失败） |
+| E-1-030 | Entity RMB 配额四位小数 | 边界值 | `quota=600.1234`（issue #293 回归锚点，修复前必失败） |
+| E-1-031 | Entity RMB 配额八位小数 | 边界值 | `quota=1000.12345678` |
+| E-1-032 | Entity RMB 配额九位小数 | 合法性条件 | 验证 ErrNum=422，文案指向小数位 |
+| E-1-033 | Entity RMB 配额八位小数且超 9000 万元上限 | 合法性条件 | 验证 ErrNum=422，文案指向上限 |
 | E-1-103 | MySQL 后端 700 并发创建（自动 id） | 并发语义 | 50 goroutine × 14 全部 2xx、id 全局唯一、无 422 Duplicate/500（fixes #132；需 `AIAPI_MYSQL_DSN`，`-tags mysql`） |
 | E-1-019 | Entity name 含 `@`（`用户名@项目名` 形式） | 合法性条件 | 验证 ErrNum=200（Issue #135 放开 `@`） |
 | E-1-020 | Entity name 以 `@` 开头 | 合法性条件 | 验证 ErrNum=422 |
@@ -676,6 +682,28 @@ entity/
 | 字段 | 预期值 | 校验方式 |
 |------|--------|---------|
 | allow_models | `["gpt-4"]` | Equals（创建响应与 GET 回读双通道） |
+
+---
+
+#### 6.4.16 E-1-029 ~ E-1-033：Entity RMB 配额小数位边界（issue #293）
+
+##### 设计思路
+
+与 AK-1-013 ~ AK-1-017 同源：`unit=RMB` 时 `quota` 小数位按十进制表示统计，上限 8 位。
+修复前 `0.28`、`600.1234` 会被 `v*1e8` 缩放判据误判为「超过 8 位小数」（422）。
+
+##### 执行步骤与预期
+
+| TC | 请求 `quota` | 预期 ErrNum | 预期数据 |
+|----|--------------|-------------|----------|
+| E-1-029 | `0.28` | 200 | `quota_plan.quota` 与 `balance.remaining` = 0.28（误差 ≤ 1e-8），`used=0` |
+| E-1-030 | `600.1234` | 200 | 回读与写入一致（误差 ≤ 1e-8） |
+| E-1-031 | `1000.12345678` | 200 | 回读与写入一致（误差 ≤ 1e-8） |
+| E-1-032 | `100.123456789` | 422 | `ErrMsg` 含 `decimal places` |
+| E-1-033 | `90000000.00000001` | 422 | `ErrMsg` 含 `must be <=` |
+
+正例经 `POST /open-api/v1/entities` 创建后，用 `GET /open-api/v1/entities/{id}/quota-plan` 回读校验；
+用例删除所创建的 Entity。
 
 ---
 
@@ -1870,6 +1898,10 @@ URI：`id`
 |------|------|---------|---------|
 | E-8-001 | 重置配额余额 | 正常参数 | used=0，new_remaining=previous_quota |
 | E-8-002 | 重置并修改 quota | 正常参数 | new_quota 和 new_remaining 同步更新 |
+| E-8-003 | 重置 RMB 配额余额 | 正常参数 | 8 位小数精度保持 |
+| E-8-004 | 重置 RMB 配额超过 9000 万元上限 | 合法性条件 | 验证 ErrNum=422 |
+| E-8-005 | 重置 RMB 配额八位小数 | 边界值 | 前置 `0.28`、重置 `1000.12345678`，回读误差 ≤ 1e-8（issue #293） |
+| E-8-006 | 重置 RMB 配额九位小数 | 合法性条件 | 验证 ErrNum=422，文案指向小数位（issue #293） |
 
 ### 13.4 测试场景详细设计
 
@@ -1993,6 +2025,23 @@ URI：`id`
 
 ---
 
+#### 13.4.4 E-8-004 ~ E-8-006：Entity RMB 重置配额的边界条件（issue #293）
+
+##### 设计思路
+
+重置接口（`POST /open-api/v1/entities/{id}/quota-plan/reset`）与创建/更新共享同一套小数位判据。
+本组钉死上限与小数位两条边界；前置配额写入统一经 `testutil.MustPatch` 断言业务成功。
+
+##### 执行步骤与预期
+
+| TC | 前置 `quota` | 请求 `quota` | 预期 |
+|----|--------------|--------------|------|
+| E-8-004 | `50.5` | `90000000.01` | 422（上限） |
+| E-8-005 | `0.28` | `1000.12345678` | 200；`previous_quota=0.28`、`new_quota=1000.12345678`、`balance.used=0`、`balance.new_remaining=1000.12345678`（误差 ≤ 1e-8） |
+| E-8-006 | `200.8888` | `100.123456789` | 422（小数位） |
+
+---
+
 ## 14. 更新配额计划时的余额调整
 
 ### 14.1 接口信息
@@ -2017,8 +2066,11 @@ URI：`id`
 | E-9-006 | 普通属性修改不影响配额余额 | 正常参数 | 修改 `allow_models` 等，余额不变 |
 | E-9-007 | 仅修改 quota（单位不变）时保留非零 used | 正常参数 | 预置 Redis 剩余 400（used=600），修改 quota 为 800 后 `used=600`、`remaining=200` |
 | E-9-008 | RMB 配额仅修改 quota 时保留非零 used | 正常参数 | 预置 Redis 剩余 400.0000（used=600.1234），修改 quota 为 800 后 `used=600.1234`、`remaining=199.8766` |
-| E-9-009 | 配额总量修改为 0 后剩余额度清零（回归 issue #136） | 正常参数 | 预置 Redis 剩余 400（used=600），修改 quota 为 0 后 `remaining=0`，且 Redis 余额同步为 0 |
-| E-9-010 | RMB 配额总量修改为 0 后剩余额度清零 | 正常参数 | 预置 Redis 剩余 400.0000（used=600.1234），修改 quota 为 0 后 `remaining=0`，且 Redis 余额同步为 0 |
+| E-9-009 | 配额总量修改为 0 后剩余额度展示清零、欠费保留在 Redis（回归 issue #136 / #1476） | 正常参数 | 预置 Redis 剩余 400（used=600），修改 quota 为 0 后 `remaining=0`（展示钳零）、`used=600`，Redis 余额为 **-600**（issue #1476：不再钳零，欠费保留） |
+| E-9-010 | RMB 配额总量修改为 0 后剩余额度展示清零、欠费保留在 Redis | 正常参数 | 预置 Redis 剩余 400.0000（used=600.1234），修改 quota 为 0 后 `remaining=0`、`used=600.1234`，Redis 余额为 **-600.1234** |
+| E-9-011 | 欠费余额（Redis 为负）下 used 超 quota、remaining 展示 0 | 正常参数 | 预置 Redis 余额 -100（used=1100 > quota=1000）后查询，`used=1100`、`remaining=0`（issue #1476） |
+| E-9-012 | 欠费状态下调大配额仍不足时 remaining 保持为负 | 正常参数 | 预置余额 -100（used=1100），quota 调到 1050 后 Redis 为 **-50**、`used=1100`、`remaining=0`（欠费不被凭空抹掉） |
+| E-9-013 | 欠费状态下调大配额覆盖欠费后 remaining 转正 | 正常参数 | 预置余额 -100（used=1100），quota 调到 2000 后 Redis 为 **900**、`used=1100`、`remaining=900` |
 
 ### 14.3 测试场景详细设计
 
@@ -2028,7 +2080,7 @@ URI：`id`
 
 ##### 设计思路
 
-验证单位不变、仅调额时，历史已用量 `used` 被保留，`remaining = max(0, 新 quota - used)`。
+验证单位不变、仅调额时，历史已用量 `used` 被保留，`remaining = 新 quota - used`（issue #1476 起不再钳零，可为负，见 14.3.12）。
 
 ##### 前提数据准备
 
@@ -2359,11 +2411,11 @@ URI：`id`
 | balance.remaining | 199.8766 | Equals |
 | Redis 余额（`GetQuotaRemaining`） | 199.8766 | Equals |
 
-#### 14.3.9 E-9-009：配额总量修改为 0 后剩余额度清零（回归 issue #136）
+#### 14.3.9 E-9-009：配额总量修改为 0 后剩余额度展示清零、欠费保留在 Redis（回归 issue #136 / #1476）
 
 ##### 设计思路
 
-回归 [ai-gateway-api#136](https://github.com/rainway-ai-gateway/ai-gateway-api/issues/136)：预置 Redis 剩余 400（used=600），将 total_token 配额总量修改为 0 后，`remaining` 清零（`max(0, 0 - 600)`），且 Redis 余额被同步为 0，BFE 将立即以 QuotaExhausted 拒绝请求。
+回归 [ai-gateway-api#136](https://github.com/rainway-ai-gateway/ai-gateway-api/issues/136)：预置 Redis 剩余 400（used=600），将 total_token 配额总量修改为 0 后，`remaining` 展示清零（对外钳 0）、`used` 如实为 600。issue #1476 起调额不再对 `targetRemaining = 新quota - used` 钳零：Redis 余额为 **-600**，欠费保留在余额中（负值表示新配额仍不足以覆盖已用量，BFE 鉴权继续以 QuotaExhausted 拒绝）。
 
 ##### 前提数据准备
 
@@ -2396,15 +2448,15 @@ URI：`id`
 
 | 字段 | 预期值 | 校验方式 |
 |------|--------|---------|
-| balance.used | 0 | Equals |
+| balance.used | 600 | Equals |
 | balance.remaining | 0 | Equals |
-| Redis 余额（`GetQuotaRemaining`） | 0 | Equals |
+| Redis 余额（`GetQuotaRemaining`） | -600 | Equals |
 
-#### 14.3.10 E-9-010：RMB 配额总量修改为 0 后剩余额度清零
+#### 14.3.10 E-9-010：RMB 配额总量修改为 0 后剩余额度展示清零、欠费保留在 Redis
 
 ##### 设计思路
 
-RMB 配额的 quota 清零场景：预置 Redis 剩余 400.0000（used=600.1234），将 quota 从 1000.1234 修改为 0 后，`remaining` 清零，且 Redis 余额被同步为 0。
+RMB 配额的 quota 清零场景：预置 Redis 剩余 400.0000（used=600.1234），将 quota 从 1000.1234 修改为 0 后，`remaining` 展示清零、`used` 如实为 600.1234；issue #1476 起 Redis 余额保留为 **-600.1234**（1e-8 定点口径），不再钳零。
 
 ##### 前提数据准备
 
@@ -2437,9 +2489,117 @@ RMB 配额的 quota 清零场景：预置 Redis 剩余 400.0000（used=600.1234�
 
 | 字段 | 预期值 | 校验方式 |
 |------|--------|---------|
-| balance.used | 0 | Equals |
+| balance.used | 600.1234 | Equals |
 | balance.remaining | 0 | Equals |
-| Redis 余额（`GetQuotaRemaining`） | 0 | Equals |
+| Redis 余额（`GetQuotaRemaining`） | -600.1234 | Equals |
+
+#### 14.3.11 E-9-011：欠费余额（Redis 为负）下 used 超 quota、remaining 展示 0
+
+##### 设计思路
+
+issue #1476：BFE 扣减改为全额执行后余额可为负（越过配额边界的用量不再被丢弃）。预置 Redis 余额 -100，`used = quota - remaining = 1000 - (-100) = 1100`，允许大于 quota；对外展示的 `remaining` 钳 0。修复前该场景 remaining 被钳 0，used 恒等于 quota=1000，超额 100 不可见。
+
+##### 前提数据准备
+
+已创建有限配额 Entity（quota=1000，total_token），并通过 `ServerManager.SetQuotaRemaining(entityID, -100, "total_token")` 模拟欠费。
+
+##### 执行步骤
+
+1. 查询 quota-plan 接口并校验 `balance`。
+
+##### 预期返回结果
+
+**ErrNum**：200  
+**ErrMsg**：success
+
+**Data 字段校验**：
+
+| 字段 | 预期值 | 校验方式 |
+|------|--------|---------|
+| balance.used | 1100 | Equals |
+| balance.remaining | 0 | Equals |
+
+#### 14.3.12 E-9-012：欠费状态下调大配额仍不足时 remaining 保持为负
+
+##### 设计思路
+
+issue #1476：`adjustQuota` 的 `targetRemaining = 新quota - used` 不再钳零。欠费状态（余额 -100，used=1100）下将 quota 调到 1050：`targetRemaining = 1050 - 1100 = -50` 写入 Redis，欠费不被调额凭空抹掉；`used` 保持 1100、展示 `remaining` 为 0，BFE 鉴权继续拒绝。修复前 -50 被钳为 0，欠费 50 被凭空清除。
+
+##### 前提数据准备
+
+已创建有限配额 Entity（quota=1000，total_token），预置 Redis 余额 -100。
+
+##### 执行步骤
+
+1. 发送 PATCH 请求修改 `quota_plan.quota` 为 1050。
+2. 查询 quota-plan 接口并校验 `balance`。
+3. 通过 `ServerManager.GetQuotaRemaining` 校验 Redis 余额。
+
+##### 请求参数
+
+```json
+{
+    "quota_plan": {
+        "unlimited": false,
+        "quota": 1050,
+        "unit": "total_token"
+    }
+}
+```
+
+##### 预期返回结果
+
+**ErrNum**：200  
+**ErrMsg**：success
+
+**Data 字段校验**：
+
+| 字段 | 预期值 | 校验方式 |
+|------|--------|---------|
+| balance.used | 1100 | Equals |
+| balance.remaining | 0 | Equals |
+| Redis 余额（`GetQuotaRemaining`） | -50 | Equals |
+
+#### 14.3.13 E-9-013：欠费状态下调大配额覆盖欠费后 remaining 转正
+
+##### 设计思路
+
+issue #1476：欠费状态（余额 -100，used=1100）下将 quota 调到 2000，`targetRemaining = 2000 - 1100 = 900`，鉴权恢复放行；`used` 保持 1100、`remaining` 展示 900。
+
+##### 前提数据准备
+
+已创建有限配额 Entity（quota=1000，total_token），预置 Redis 余额 -100。
+
+##### 执行步骤
+
+1. 发送 PATCH 请求修改 `quota_plan.quota` 为 2000。
+2. 查询 quota-plan 接口并校验 `balance`。
+3. 通过 `ServerManager.GetQuotaRemaining` 校验 Redis 余额。
+
+##### 请求参数
+
+```json
+{
+    "quota_plan": {
+        "unlimited": false,
+        "quota": 2000,
+        "unit": "total_token"
+    }
+}
+```
+
+##### 预期返回结果
+
+**ErrNum**：200  
+**ErrMsg**：success
+
+**Data 字段校验**：
+
+| 字段 | 预期值 | 校验方式 |
+|------|--------|---------|
+| balance.used | 1100 | Equals |
+| balance.remaining | 900 | Equals |
+| Redis 余额（`GetQuotaRemaining`） | 900 | Equals |
 
 ## 15. 依赖与数据准备
 

@@ -175,6 +175,17 @@ func TestNormalizeLLMConfig(t *testing.T) {
 		assert.Nil(t, normalizeLLMConfig(nil))
 	})
 
+	t.Run("copies price_miss_action (issue #1479)", func(t *testing.T) {
+		in := &icluster_conf.LLMConfig{PriceMissAction: lib.PString("reject")}
+		got := normalizeLLMConfig(in)
+		require.NotNil(t, got)
+		require.NotNil(t, got.PriceMissAction)
+		assert.Equal(t, "reject", *got.PriceMissAction)
+
+		// nil stays nil: bfe applies the fallback_chat default.
+		assert.Nil(t, normalizeLLMConfig(&icluster_conf.LLMConfig{}).PriceMissAction)
+	})
+
 	t.Run("copies prefix fields", func(t *testing.T) {
 		in := &icluster_conf.LLMConfig{
 			Models:      []string{"gpt-4"},
@@ -191,10 +202,12 @@ func TestNormalizeLLMConfig(t *testing.T) {
 		in := &icluster_conf.LLMConfig{
 			Models: []string{"gpt-4"},
 			KeyAffinity: &icluster_conf.KeyAffinity{
-				Enabled:       lib.PBool(true),
-				TTL:           lib.PInt(600),
-				RedisPrefix:   lib.PString("bfe:ai:key_affinity"),
-				PenaltyEnable: lib.PBool(true),
+				Enabled:        lib.PBool(true),
+				TTL:            lib.PInt(600),
+				RedisPrefix:    lib.PString("bfe:ai:key_affinity"),
+				PenaltyEnable:  lib.PBool(true),
+				PenaltyTTL429:  lib.PInt(30),
+				PenaltyTTLAuth: lib.PInt(120),
 			},
 		}
 		got := normalizeLLMConfig(in)
@@ -204,6 +217,8 @@ func TestNormalizeLLMConfig(t *testing.T) {
 		assert.Equal(t, 600, *got.KeyAffinity.TTL)
 		assert.Equal(t, "bfe:ai:key_affinity", *got.KeyAffinity.RedisPrefix)
 		assert.Equal(t, true, *got.KeyAffinity.PenaltyEnable)
+		assert.Equal(t, 30, *got.KeyAffinity.PenaltyTTL429)
+		assert.Equal(t, 120, *got.KeyAffinity.PenaltyTTLAuth)
 	})
 
 	t.Run("copies normalize_upstream_error (no default synthesis)", func(t *testing.T) {
@@ -227,6 +242,25 @@ func TestNormalizeLLMConfig(t *testing.T) {
 		assert.Equal(t, false, *got.NormalizeUpstreamError.RedactSecrets)
 	})
 
+	t.Run("copies ensure_reasoning_content", func(t *testing.T) {
+		in := &icluster_conf.LLMConfig{
+			Models:                 []string{"deepseek-chat"},
+			EnsureReasoningContent: []string{"openai", "anthropic"},
+		}
+		got := normalizeLLMConfig(in)
+		require.NotNil(t, got)
+		assert.Equal(t, []string{"openai", "anthropic"}, got.EnsureReasoningContent)
+	})
+
+	t.Run("ensure_reasoning_content nil stays nil (BFE zero value = disabled)", func(t *testing.T) {
+		in := &icluster_conf.LLMConfig{
+			Models: []string{"deepseek-chat"},
+		}
+		got := normalizeLLMConfig(in)
+		require.NotNil(t, got)
+		assert.Nil(t, got.EnsureReasoningContent)
+	})
+
 	t.Run("normalize_upstream_error nil stays nil (BFE Effective applies defaults)", func(t *testing.T) {
 		in := &icluster_conf.LLMConfig{
 			Models: []string{"gpt-4"},
@@ -248,6 +282,8 @@ func TestNormalizeLLMConfig(t *testing.T) {
 		assert.Equal(t, 600, *got.KeyAffinity.TTL)
 		assert.Equal(t, "bfe:ai:key_affinity", *got.KeyAffinity.RedisPrefix)
 		assert.Equal(t, true, *got.KeyAffinity.PenaltyEnable)
+		assert.Equal(t, 60, *got.KeyAffinity.PenaltyTTL429)
+		assert.Equal(t, 300, *got.KeyAffinity.PenaltyTTLAuth)
 	})
 
 	t.Run("key_affinity fills defaults when nil", func(t *testing.T) {
@@ -261,6 +297,8 @@ func TestNormalizeLLMConfig(t *testing.T) {
 		assert.Equal(t, 600, *got.KeyAffinity.TTL)
 		assert.Equal(t, "bfe:ai:key_affinity", *got.KeyAffinity.RedisPrefix)
 		assert.Equal(t, true, *got.KeyAffinity.PenaltyEnable)
+		assert.Equal(t, 60, *got.KeyAffinity.PenaltyTTL429)
+		assert.Equal(t, 300, *got.KeyAffinity.PenaltyTTLAuth)
 	})
 }
 

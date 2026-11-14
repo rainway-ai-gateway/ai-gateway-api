@@ -56,7 +56,6 @@ CREATE TABLE providers (
   instance_pool TEXT NOT NULL,
   instance_source TEXT NOT NULL DEFAULT 'instance_pool',
   k8s_pool_name TEXT,
-  k8s_instance_pool TEXT,
   model_protocols TEXT NOT NULL,
   protocol_paths TEXT,
   time_zone TEXT NOT NULL DEFAULT 'Asia/Shanghai',
@@ -95,7 +94,6 @@ func TestToDAOParamForUpdate_OmittedFieldsStayNil(t *testing.T) {
 	assert.Nil(t, data.InstancePool)
 	assert.Nil(t, data.InstanceSource)
 	assert.Nil(t, data.K8sPoolName)
-	assert.Nil(t, data.K8sInstancePool)
 	assert.Nil(t, data.ModelProtocols)
 	assert.Nil(t, data.TimeZone)
 	assert.Nil(t, data.Tiers)
@@ -152,8 +150,6 @@ func TestToDAOParam_CreatePathDefaultsUnchanged(t *testing.T) {
 	require.NotNil(t, data.Tiers)
 	require.NotNil(t, data.InstanceSource)
 	assert.Equal(t, iprovider.InstanceSourceInstancePool, *data.InstanceSource)
-	require.NotNil(t, data.K8sInstancePool)
-	assert.Equal(t, "[]", *data.K8sInstancePool)
 	assert.Nil(t, data.K8sPoolName)
 }
 
@@ -288,15 +284,14 @@ func TestRDBProviderStorager_CreateProviderDefaults(t *testing.T) {
 	assert.Empty(t, one.Tiers)
 	assert.Equal(t, iprovider.InstanceSourceInstancePool, one.InstanceSource)
 	assert.Nil(t, one.K8sPoolName)
-	assert.Empty(t, one.K8sInstancePool)
 }
 
 func TestRDBProviderStorager_InstanceSourceRoundTrip(t *testing.T) {
 	ctx := context.Background()
 	s := setupTestStorager(t)
 
-	// Create a k8s_pool-mode provider; k8s_instance_pool starts as an empty
-	// mirror until the first /k8s_pools PUT.
+	// Create a k8s_pool-mode provider; no instance mirror is persisted, only
+	// the pool name reference (k8s_pools is the single source of truth).
 	_, err := s.CreateProvider(ctx, &iprovider.ProviderParam{
 		Name:           lib.PString("k8s-provider"),
 		Models:         []string{"deepseek-chat"},
@@ -312,30 +307,9 @@ func TestRDBProviderStorager_InstanceSourceRoundTrip(t *testing.T) {
 	assert.Equal(t, iprovider.InstanceSourceK8sPool, one.InstanceSource)
 	require.NotNil(t, one.K8sPoolName)
 	assert.Equal(t, "svc-a", *one.K8sPoolName)
-	assert.Empty(t, one.K8sInstancePool)
+	assert.Empty(t, one.InstancePool)
 
-	// Mirror refresh (as performed by the k8s_pools fan-out) writes the new
-	// list; a pointer to an empty slice clears it back to [].
-	mirror := []iprovider.ProviderInstance{{Addr: "10.0.0.1", Port: 8000, Weight: 100}}
-	require.NoError(t, s.UpdateProvider(ctx, "k8s-provider", &iprovider.ProviderParam{
-		Name:            lib.PString("k8s-provider"),
-		K8sInstancePool: &mirror,
-	}))
-	one, err = s.FetchProvider(ctx, &iprovider.ProviderFilter{Name: lib.PString("k8s-provider")})
-	require.NoError(t, err)
-	require.Len(t, one.K8sInstancePool, 1)
-	assert.Equal(t, "10.0.0.1", one.K8sInstancePool[0].Addr)
-
-	empty := []iprovider.ProviderInstance{}
-	require.NoError(t, s.UpdateProvider(ctx, "k8s-provider", &iprovider.ProviderParam{
-		Name:            lib.PString("k8s-provider"),
-		K8sInstancePool: &empty,
-	}))
-	one, err = s.FetchProvider(ctx, &iprovider.ProviderFilter{Name: lib.PString("k8s-provider")})
-	require.NoError(t, err)
-	assert.Empty(t, one.K8sInstancePool)
-
-	// Omitted mirror field keeps the stored value.
+	// An update that omits instance_pool keeps the stored value.
 	require.NoError(t, s.UpdateProvider(ctx, "k8s-provider", &iprovider.ProviderParam{
 		Name:        lib.PString("k8s-provider"),
 		Description: lib.PString("desc"),
@@ -343,7 +317,6 @@ func TestRDBProviderStorager_InstanceSourceRoundTrip(t *testing.T) {
 	one, err = s.FetchProvider(ctx, &iprovider.ProviderFilter{Name: lib.PString("k8s-provider")})
 	require.NoError(t, err)
 	assert.Equal(t, "desc", one.Description)
-	assert.Empty(t, one.K8sInstancePool)
 }
 
 // api_keys is a text column (it holds an enc$v1$ envelope at rest), so the DB

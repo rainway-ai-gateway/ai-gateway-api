@@ -67,26 +67,26 @@ var PricingTierSchema = &testutil.ObjectSchema{
 var ProviderSchema = &testutil.ObjectSchema{
 	Required: []string{
 		"id", "name", "description", "model_endpoint", "models", "keys",
-		"instance_pool", "instance_source", "k8s_pool_name", "k8s_instance_pool",
+		"instance_pool", "instance_source", "k8s_pool_name",
 		"model_protocols", "time_zone", "tiers",
 		"create_time", "update_time",
 	},
 	Fields: map[string]testutil.FieldSpec{
-		"id":                {Type: testutil.TypeInt},
-		"name":              {Type: testutil.TypeString},
-		"description":       {Type: testutil.TypeString},
-		"model_endpoint":    {Type: testutil.TypeObject, Nested: ProviderEndpointSchema},
-		"models":            {Type: testutil.TypeArray, Item: &testutil.FieldSpec{Type: testutil.TypeString}},
-		"keys":              {Type: testutil.TypeArray, Elem: ProviderKeySchema},
-		"instance_pool":     {Type: testutil.TypeArray, Elem: ProviderInstanceSchema},
-		"instance_source":   {Type: testutil.TypeString, Enum: []interface{}{"instance_pool", "k8s_pool"}},
-		"k8s_pool_name":     {Type: testutil.TypeString, Nullable: true}, // instance_pool 形态下合同为 null（providers.md 数据模型示例）
-		"k8s_instance_pool": {Type: testutil.TypeArray, Elem: ProviderInstanceSchema},
-		"model_protocols":   {Type: testutil.TypeArray, Item: &testutil.FieldSpec{Type: testutil.TypeString, Enum: []interface{}{"openai", "anthropic", "gemini"}}},
-		"protocol_paths":    {Type: testutil.TypeObject},
-		"time_zone":         {Type: testutil.TypeString},
-		"tiers":             {Type: testutil.TypeArray, Elem: PricingTierSchema},
-		"create_time":       {Type: testutil.TypeInt},
-		"update_time":       {Type: testutil.TypeInt},
+		"id":              {Type: testutil.TypeInt},
+		"name":            {Type: testutil.TypeString},
+		"description":     {Type: testutil.TypeString},
+		"model_endpoint":  {Type: testutil.TypeObject, Nested: ProviderEndpointSchema},
+		"models":          {Type: testutil.TypeArray, Item: &testutil.FieldSpec{Type: testutil.TypeString}},
+		"keys":            {Type: testutil.TypeArray, Elem: ProviderKeySchema},
+		"instance_pool":   {Type: testutil.TypeArray, Elem: ProviderInstanceSchema},
+		"instance_source": {Type: testutil.TypeString, Enum: []interface{}{"instance_pool", "k8s_pool"}},
+		"k8s_pool_name":   {Type: testutil.TypeString, Nullable: true}, // instance_pool 形态下合同为 null（providers.md 数据模型示例）
+		// k8s_instance_pool 镜像字段已删除（2026-10-27 实时解析改造）：k8s 实例经 /k8s_pools 查询，不在 provider 响应中出现；请求携带该字段按未知字段静默忽略。
+		"model_protocols": {Type: testutil.TypeArray, Item: &testutil.FieldSpec{Type: testutil.TypeString, Enum: []interface{}{"openai", "anthropic", "gemini"}}},
+		"protocol_paths":  {Type: testutil.TypeObject},
+		"time_zone":       {Type: testutil.TypeString},
+		"tiers":           {Type: testutil.TypeArray, Elem: PricingTierSchema},
+		"create_time":     {Type: testutil.TypeInt},
+		"update_time":     {Type: testutil.TypeInt},
 	},
 }

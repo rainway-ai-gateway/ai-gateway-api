@@ -105,6 +105,7 @@ type LogsQuery struct {
 	IntentQuestion  *string
 	IntentAnswer    *string
 	IntentSource    *string
+	PriceWarn       *string // exact match on ai_price_warn (missing-price shape, issue #1479)
 	Page            int
 	PageSize        int
 }
