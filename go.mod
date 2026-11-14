@@ -5,7 +5,7 @@ go 1.24.0
 require (
 	github.com/BurntSushi/toml v0.3.1
 	github.com/DATA-DOG/go-sqlmock v1.4.0
-	github.com/bfenetworks/bfe v1.8.10-0.20261030144950-39c15e1079e9
+	github.com/bfenetworks/bfe v1.9.0
 	github.com/bfenetworks/go-lib v0.0.4
 	github.com/codegangsta/negroni v1.0.0
 	github.com/didi/gendry v1.7.0
@@ -79,15 +79,3 @@ require (
 	modernc.org/memory v1.5.0 // indirect
 	modernc.org/sqlite v1.23.1 // indirect
 )
-
-// TODO(dep-bump): 临时依赖。bfe 上游未发布含 AIConf.EnsureReasoningContent 与
-// AIKeyPolicy.SessionAffinityPenaltyTTL{429,Auth}（issue #1448）的版本，这里 replace 到
-// 开发分支 v1.9.0-dev 的提交 904ceab1（该分支此前已下线 bfe_tls，故需配合
-// model/iprotocol 的 crypto/tls 适配）。
-// fork 保留了原 module path（github.com/bfenetworks/bfe），因此 replace 合法；
-// 伪版本基线按 fork 上可达的最高 tag（v1.4.0）计算。
-// 本地联调如需切换：改为 replace github.com/bfenetworks/bfe => ../bfe。
-// 上游发布对应版本后：删除本行，并把 require 的 bfe 版本 bump 到该版本
-// （届时 go mod tidy 会自动补 expr-lang/expr、移除 tjfoc/gmsm）。
-
-replace github.com/bfenetworks/bfe => github.com/mileszhang2016/bfe v1.4.1-0.20261104035437-904ceab15397
