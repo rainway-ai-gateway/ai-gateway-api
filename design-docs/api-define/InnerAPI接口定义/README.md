@@ -28,5 +28,6 @@
 | traffic-mirror-rule 接口 | [traffic-mirror-rule.md](./traffic-mirror-rule.md) |
 | mod-ai-intent 接口 | [mod-ai-intent.md](./mod-ai-intent.md) |
 | k8s_pools 接口 | [k8s-pools.md](./k8s-pools.md) |
+| mod-access-pb 接口 | [mod-access-pb.md](./mod-access-pb.md) |
 | 数据模型定义 | [data-models.md](./data-models.md) |
 | 附录 | [appendix.md](./appendix.md) |

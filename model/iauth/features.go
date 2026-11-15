@@ -136,6 +136,9 @@ const (
 	// ai intent
 	FeatureAIIntent Feature = "AIIntent"
 
+	// access log (mod_access_pb.data 白名单管理)
+	FeatureAccessLog Feature = "AccessLog"
+
 	// model pricing
 	FeatureModelPrice Feature = "ModelPrice"
 	FeatureProvider   Feature = "Provider"
@@ -215,6 +218,7 @@ var scope2permission = map[string]map[Feature]Action{
 		FeatureAIContext:       actionAll,
 		FeatureTrafficMirror:   actionAll,
 		FeatureAIIntent:        actionAll,
+		FeatureAccessLog:       actionAll,
 
 		FeatureModelPrice:   actionAll,
 		FeatureProvider:     actionAll,
@@ -265,6 +269,7 @@ var scope2permission = map[string]map[Feature]Action{
 		FeatureAIContext:       actionReadonly,
 		FeatureTrafficMirror:   actionReadonly,
 		FeatureAIIntent:        actionReadonly,
+		FeatureAccessLog:       actionReadonly,
 
 		FeatureModelPrice: actionReadonly,
 		FeatureProvider:   actionReadonly,

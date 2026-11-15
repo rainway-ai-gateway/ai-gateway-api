@@ -58,6 +58,7 @@ func TestOpenAPI_Schema(t *testing.T) {
 	t.Run("ai_context_settings", testAIContextSettingsSchema)
 	t.Run("traffic_mirror", testTrafficMirrorSchema)
 	t.Run("intent_config", testIntentConfigSchema)
+	t.Run("access_log", testAccessLogSchema)
 	t.Run("epp_pool", testEppPoolSchema)
 	t.Run("epp_assignments", testEppAssignmentsSchema)
 	t.Run("security_reencrypt_sweeps", testSecuritySchema)
@@ -1700,4 +1701,28 @@ func waitSweepTaskTerminal(t *testing.T, sweepPath, taskID string) map[string]in
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
+}
+
+// testAccessLogSchema /open-api/v1/access-log/config 响应 schema（access-log.md §1）。
+// 单例全量读写：PUT 发布后用 GET 校验合同 2 字段、无内部 version/id。
+func testAccessLogSchema(t *testing.T) {
+	const path = "/open-api/v1/access-log/config"
+
+	putResp, err := testutil.GetClient().Put(path, map[string]interface{}{
+		"req_headers": []interface{}{"business_type"},
+		"res_headers": []interface{}{"x-trace-id"},
+	})
+	require.NoError(t, err)
+	require.Equal(t, 200, putResp.ErrNum, putResp.ErrMsg)
+
+	resp, err := testutil.GetClient().Get(path)
+	require.NoError(t, err)
+	testutil.AssertSchema(t, resp, AccessLogConfigSchema)
+
+	var payload map[string]interface{}
+	require.NoError(t, json.Unmarshal(resp.Data, &payload))
+	raw, err := json.Marshal(payload)
+	require.NoError(t, err)
+	assert.NotContains(t, string(raw), `"version"`)
+	assert.NotContains(t, string(raw), `"id"`)
 }

@@ -45,6 +45,7 @@ import (
 	"github.com/rainway-ai-gateway/ai-gateway-api/model/ibasic"
 	"github.com/rainway-ai-gateway/ai-gateway-api/model/ibatch"
 	"github.com/rainway-ai-gateway/ai-gateway-api/model/icluster_conf"
+	"github.com/rainway-ai-gateway/ai-gateway-api/model/access_log"
 	"github.com/rainway-ai-gateway/ai-gateway-api/model/iintent_config"
 	"github.com/rainway-ai-gateway/ai-gateway-api/model/ik8s_pool"
 	"github.com/rainway-ai-gateway/ai-gateway-api/model/imodel_price"
@@ -64,6 +65,7 @@ import (
 	"github.com/rainway-ai-gateway/ai-gateway-api/storage/clickhousereport"
 	"github.com/rainway-ai-gateway/ai-gateway-api/storage/dorisreport"
 	"github.com/rainway-ai-gateway/ai-gateway-api/storage/mysqlreport"
+	accessLogStorage "github.com/rainway-ai-gateway/ai-gateway-api/storage/rdb/access_log"
 	aiCacheStorage "github.com/rainway-ai-gateway/ai-gateway-api/storage/rdb/ai_cache"
 	aiContextStorage "github.com/rainway-ai-gateway/ai-gateway-api/storage/rdb/ai_context"
 	"github.com/rainway-ai-gateway/ai-gateway-api/storage/rdb/ai_route"
@@ -381,6 +383,16 @@ func Init() error {
 		container.IntentConfigStorager,
 		container.VersionControlManager)
 	container.IntentConfigManager.SetOperationLogManager(container.OperationLogManager)
+
+	container.AccessLogConfStorager = accessLogStorage.NewAccessLogConfStorager(stateful.NewBFEDBContext)
+	container.AccessLogManager = access_log.NewAccessLogManager(
+		container.TxnStoragerSingleton,
+		container.AccessLogConfStorager)
+	container.AccessLogManager.SetOperationLogManager(container.OperationLogManager)
+
+	container.AccessLogExporter = imods.NewAccessLogExporter(
+		container.AccessLogConfStorager,
+		container.VersionControlManager)
 
 	// Wire nested-resource auditors so Entity/API Key nested quota-plan and
 	// rate-limit-policy writes emit operation logs with resource_parent_id

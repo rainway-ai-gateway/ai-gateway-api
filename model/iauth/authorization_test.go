@@ -349,6 +349,7 @@ var allFeatures = []Feature{
 	FeatureNLBPool, FeatureNLBCluster, FeatureAIRoute, FeatureAPIKey,
 	FeatureEntityType, FeatureEntity, FeatureQuotaPlan, FeatureRateLimitPolicy,
 	FeatureAICache, FeatureAIContext, FeatureTrafficMirror, FeatureAIIntent,
+	FeatureAccessLog,
 	FeatureModelPrice, FeatureProvider,
 	FeatureK8sPool, FeatureOperationLog, FeatureReport, FeatureSecurity, FeatureBatch,
 }

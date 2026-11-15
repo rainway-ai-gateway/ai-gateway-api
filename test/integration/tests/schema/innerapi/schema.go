@@ -400,3 +400,25 @@ var IntentConfigExportSchema = &testutil.ObjectSchema{
 		"Questions":     {Type: testutil.TypeArray, Elem: IntentConfigQuestionExportSchema},
 	},
 }
+
+// ModAccessPbExportSchema /configs/mod-access-pb 返回 schema（mod-access-pb.md §3）。
+// Data 即 mod_access_pb.data 文件内容原样：Version 内嵌文件（数据签名版本），
+// snake_case 顶层键与 BFE 加载器契约逐字一致（Version/access_header），
+// 无 Config 包装层（ai-route 形态）。空白名单也导出（req/res 可为空数组）。
+var ModAccessPbExportSchema = &testutil.ObjectSchema{
+	Required: []string{"Version", "access_header"},
+	Fields: map[string]testutil.FieldSpec{
+		"Version":       {Type: testutil.TypeString},
+		"access_header": {Type: testutil.TypeObject, Nested: AccessHeaderExportSchema},
+	},
+}
+
+// AccessHeaderExportSchema mod_access_pb.data 的 access_header 段
+// （snake_case 文件合同；空白名单也导出，req/res 可为空数组）。
+var AccessHeaderExportSchema = &testutil.ObjectSchema{
+	Required: []string{"req_headers", "res_headers"},
+	Fields: map[string]testutil.FieldSpec{
+		"req_headers": {Type: testutil.TypeArray, Item: &testutil.FieldSpec{Type: testutil.TypeString}},
+		"res_headers": {Type: testutil.TypeArray, Item: &testutil.FieldSpec{Type: testutil.TypeString}},
+	},
+}

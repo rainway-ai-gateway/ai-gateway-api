@@ -53,6 +53,7 @@ func TestInnerAPI_Schema(t *testing.T) {
 	t.Run("ai_context_rule", testAIContextRuleSchema)
 	t.Run("traffic_mirror_rule", testTrafficMirrorRuleSchema)
 	t.Run("mod_ai_intent", testModAIIntentSchema)
+	t.Run("mod_access_pb", testModAccessPbSchema)
 	t.Run("epp_data", testEppDataSchema)
 	t.Run("server_data_conf_epp", testServerDataConfEppSchema)
 }
@@ -1289,4 +1290,39 @@ func assertServerDataConfEpp(t *testing.T, data []byte, clusterName, wantMode st
 		return
 	}
 	assert.Equal(t, wantEPPAddr, eppAddr, "EPPAddr should be the assigned group's instance addresses")
+}
+
+// testModAccessPbSchema /configs/mod-access-pb 返回 schema（mod-access-pb.md §3）。
+// 发布后首拉：Data 非 null（空白名单也导出，与 mod-ai-intent 语义不同）、
+// 顶层键与 BFE 文件契约逐字一致（禁止幻影键）。
+func testModAccessPbSchema(t *testing.T) {
+	const exportPath = "/inner-api/v1/configs/mod-access-pb"
+
+	putResp, err := testutil.GetClient().Put("/open-api/v1/access-log/config", map[string]interface{}{
+		"req_headers": []interface{}{"business_type"},
+		"res_headers": []interface{}{"x-trace-id"},
+	})
+	require.NoError(t, err)
+	require.Equal(t, 200, putResp.ErrNum, putResp.ErrMsg)
+
+	resp, err := testutil.GetClient().Get(exportPath)
+	require.NoError(t, err)
+	testutil.AssertSuccess(t, resp)
+	if resp.Data == nil || string(resp.Data) == "null" {
+		t.Fatal("first pull after publish must return data")
+	}
+	testutil.AssertSchema(t, resp, ModAccessPbExportSchema)
+
+	// 定向断言：顶层键精确为 {Version, access_header}（防幻影键）；
+	// 段内键精确为 {req_headers, res_headers}（snake_case 文件契约）。
+	var payload map[string]interface{}
+	require.NoError(t, json.Unmarshal(resp.Data, &payload))
+	assert.ElementsMatch(t, []string{"Version", "access_header"}, keysOfInnerMap(payload),
+		"export must be the file content verbatim (Version embedded, no Config wrapper)")
+	section, ok := payload["access_header"].(map[string]interface{})
+	require.True(t, ok, "access_header should be object")
+	assert.ElementsMatch(t, []string{"req_headers", "res_headers"}, keysOfInnerMap(section),
+		"access_header section must carry exactly the snake_case contract keys")
+	assert.Equal(t, []interface{}{"Business_type"}, section["req_headers"])
+	assert.Equal(t, []interface{}{"X-Trace-Id"}, section["res_headers"])
 }

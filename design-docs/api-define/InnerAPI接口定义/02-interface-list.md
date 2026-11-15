@@ -29,6 +29,7 @@ K8s 实例池维护接口，供 K8s 发现组件写入发现的实例快照。�
 | 2 | `/k8s_pools/{name}` | GET | 查询单个 pool 条目 | [k8s-pools.md](./k8s-pools.md) |
 | 3 | `/k8s_pools` | GET | 查询全部 pool 列表 | [k8s-pools.md](./k8s-pools.md) |
 | 4 | `/k8s_pools/{name}` | DELETE | 删除 pool（无引用保护） | [k8s-pools.md](./k8s-pools.md) |
+| 15 | `/configs/mod-access-pb` | 导出访问日志动态配置（Header 白名单） | `version` | [mod-access-pb.md](./mod-access-pb.md) |
 
 ## 3. 特殊参数说明
 
