@@ -67,6 +67,7 @@
             "penalty_ttl_429": 60,
             "penalty_ttl_auth": 300
         },
+        "max_concurrency_per_key": 1,
         "normalize_upstream_error": {
             "enabled": true,
             "stream_enabled": false,
@@ -195,6 +196,7 @@
 | keys| []ClusterKeyRef |  Key 引用与权重列表 | N | 一个 cluster 支持配置多个 Key，按权重做路由；通过 `name` 引用 provider 中定义的 key；为空数组表示不配置 API-Key | 非必填；默认值为空数组 `[]`；元素须满足 表：ClusterKeyRef 结构 |
 | key_policy| object |  Key 路由策略 | N | 多 Key 时的选择策略、重试与退避配置 | 非必填；默认见下方 表：Key 路由策略；`strategy` 本版仅支持 `weighted_random` |
 | key_affinity| object |  Key 亲和性配置 | N | 基于 Redis + `ClientKeyId` 的会话级 Key 亲和性 | 非必填；默认见下方 表：Key 亲和性配置 |
+| max_concurrency_per_key| int |  每把上游 Key 的最大并发会话数 | N | 对集群内每把 Key 统一生效：同一时刻允许绑定到单把 Key 的最大会话数；会话以客户端 `ClientKeyId` 标识，同一会话的多个并发请求只计 1；`0`（缺省）= 不限（默认）；`>0` 为固定上限（如 `1`）。占用与 Key 会话亲和性同生命周期（绑定即占用、空闲超时同 `key_affinity.ttl` 或失败解绑释放），跨 BFE 实例全局生效；`>0` 时依赖数据面 `[AIKeyAffinity]` Redis，未配置/故障期间限制不生效（fail-open），请求照常放行 | 非必填；默认值为 `0`（不限）；若传入须为 `>=0` 的整数；建议 `<= 100000`（软上限，不硬校验） |
 | normalize_upstream_error| object |  上游错误体归一配置 | N | 上游厂商错误归一为网关统一错误码与 OpenAI 兼容错误体（含状态码重映射、凭证脱敏、SSE 错误事件改写），按集群独立灰度 | 非必填；默认见下方 表：上游错误归一配置；缺省 = 关闭（上游错误原样透传） |
 | ensure_reasoning_content| []string |  需要补齐 `reasoning_content` 的协议列表 | N | 部分思考模式上游要求"最后一条 user 消息之后"的 assistant 消息必须回传 `reasoning_content`，而它自身又有不产出 reasoning 的回合；开启后网关在转发的请求体里为该窗口内的 assistant 补空串（`openai`）或空 thinking 块（`anthropic`），只增不改、异常原样透传。按集群独立开关与灰度 | 非必填；缺省或空数组 = 关闭；元素仅允许 `openai`、`anthropic`（`gemini` 无注入落点，显式拒绝）；元素不得为空或重复；每个元素必须包含在该 cluster 所属 provider 的 `model_protocols` 中（provider 未声明时按 `["openai"]` 对待） |
 | price_miss_action| string |  缺价处置动作 | N | 请求的（模型， 接口类型）无价格条目时的动作：`fallback_chat`（按同模型 chat 价回退计费，**默认**）、`bill_zero`（按 0 计费）、`reject`（转发前拒绝：HTTP 503 + `error.code=PRICE_NOT_CONFIGURED`，不调用上游、不计费）；`reject` 下集群价格表整体缺失同样拒绝 | 非必填；默认 `fallback_chat`；取值须为 `fallback_chat` / `bill_zero` / `reject`；控制台新建集群显式落值，省略等价默认 |
@@ -326,6 +328,7 @@
   - `penalty_enable` 必须为 bool。
   - `penalty_ttl_429` 若传入须为 `[10, 600]` 的整数（`0` / 负数 / 越界返回 422）；
   - `penalty_ttl_auth` 若传入须为 `[60, 1800]` 的整数（同上）。
+- `llm_config.max_concurrency_per_key` 若传入须为 `>=0` 的整数；`0`（缺省）表示不限；负数返回 422（校验规则与 BFE `AIConfCheck` 逐条对齐）。
 - `llm_config.normalize_upstream_error` 若传入：
   - `enabled` / `stream_enabled` / `redact_secrets` 必须为 bool；
   - `unrecognized_action` 取值仅支持 `passthrough`、`rewrite_generic`；
@@ -446,6 +449,7 @@
             "retry_backoff_initial": 500,
             "retry_backoff_max": 5000
         },
+        "max_concurrency_per_key": 1,
         "provider": "deepseek"
     }
 }
@@ -692,6 +696,7 @@
             "retry_backoff_initial": 500,
             "retry_backoff_max": 5000
         },
+        "max_concurrency_per_key": 1,
         "provider": "deepseek"
     }
 }

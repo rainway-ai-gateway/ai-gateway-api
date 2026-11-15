@@ -90,6 +90,13 @@ func ValidateLLMConfig(c *LLMConfig) error {
 		}
 	}
 
+	// Validate max_concurrency_per_key; mirrors the BFE AIConfCheck rule
+	// (MaxConcurrencyPerKey < 0 rejected) so an accepted config never fails
+	// the bfe load. 0 / nil means unlimited and is the default.
+	if c.MaxConcurrencyPerKey != nil && *c.MaxConcurrencyPerKey < 0 {
+		return xerror.WrapParamErrorWithMsg("llm_config.max_concurrency_per_key must be >= 0")
+	}
+
 	// Validate key_policy
 	if c.KeyPolicy != nil {
 		if c.KeyPolicy.Strategy != nil && *c.KeyPolicy.Strategy != "" && *c.KeyPolicy.Strategy != "weighted_random" {

@@ -91,11 +91,12 @@ var AIKeyPolicySchema = &testutil.ObjectSchema{
 
 // AIConfSchema ClusterConf.Config.<cluster>.AIConf 的 schema
 var AIConfSchema = &testutil.ObjectSchema{
-	Required: []string{"KeyPolicy"},
+	Required: []string{"KeyPolicy", "MaxConcurrencyPerKey"},
 	Optional: []string{"Keys", "ModelMappings", "ModelTable", "MatchPrefix", "StripPrefix", "ModelProtocols", "NormalizeUpstreamError", "EnsureReasoningContent", "PriceMissAction"},
 	Fields: map[string]testutil.FieldSpec{
 		"Keys":                   {Type: testutil.TypeArray},
 		"KeyPolicy":              {Type: testutil.TypeObject, Nested: AIKeyPolicySchema},
+		"MaxConcurrencyPerKey":   {Type: testutil.TypeInt},
 		"ModelMappings":          {Type: testutil.TypeObject},
 		"ModelTable":             {Type: testutil.TypeObject, Nested: ModelTableSchema},
 		"MatchPrefix":            {Type: testutil.TypeString},

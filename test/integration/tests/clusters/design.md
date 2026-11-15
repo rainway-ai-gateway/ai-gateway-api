@@ -3126,7 +3126,39 @@ URI：`c`
   与 key/model 引用冲突同族；用例见 `tests/clusters/update` 的 CL-4-205/206，单测见
   `TestProviderProtocolRefChecker`。变更记录：`modifications/2026-11-03-provider-protocol-narrowing-guard/`。
 
-## 15. 注意事项
+## 15. `max_concurrency_per_key` 用例（2026-11-15 每把上游 Key 最大并发会话数）
+
+合同依据：`design-docs/api-define/OpenAPI接口定义/clusters.md` 的 `llm_config.max_concurrency_per_key` 行、
+`InnerAPI接口定义/server-data-conf.md` 的 `AIConf.MaxConcurrencyPerKey` 行，以及
+`modifications/2026-11-15-ai-key-max-concurrency-per-key/`（数据面 bfe `de10ef5e`，SC48 已覆盖行为本体）。
+
+### 15.1 测试场景总览
+
+| 编号 | 验证点 | 检查项 |
+|------|--------|--------|
+| CL-1-301 | 创建带 `max_concurrency_per_key=1`：GET 回读一致，InnerAPI 导出 `AIConf.MaxConcurrencyPerKey=1`（snake→Pascal 映射） | #8 导出断言 |
+| CL-1-302 | 显式 `0`（不限）合法，回读一致 | 值域（0 是合法值，与 penalty_ttl 族不同） |
+| CL-1-303 | 缺省：回读为 `null`（指针字段惯例），导出恒为 `0` | 缺省语义 |
+| CL-1-304 | 负数（-1/-100）→ 422，错误消息归因字段名，且**集群未创建**（GET 404 / 导出无此集群） | #4 值域收敛 + 错误归因 + 防泄漏 |
+| CL-4-301 | PATCH 只改 `description`（不带 `llm_config`）：本字段保留原值，InnerAPI 导出不变 | #1 省略字段保留 |
+| CL-4-302 | PATCH 整体替换 `llm_config` 携带新值：回读与导出一致 | #3 变更语义 + #8 |
+| CL-4-303 | PATCH 负数 → 422，错误消息归因字段名，回读零变更且导出值不变 | #3 4xx 回读零变更 + #4 防泄漏 |
+| CL-4-304 | PATCH 整体替换省略本字段：回读 `null`、导出回落 `0`（不限），与 CL-4-301 省略形成对照 | #1 省略 vs 显式空（`llm_config` 为整体替换语义） |
+
+### 15.2 设计要点
+
+- 校验在 `ValidateLLMConfig`（`>=0`，与 bfe `AIConfCheck` 同源）；`0`/`nil` 均表示不限，**不做**
+  penalty_ttl 那样的"区间排除 0"处理；
+- 导出映射 `max_concurrency_per_key` → `MaxConcurrencyPerKey`，导出结构体不带 `omitempty`，
+  缺省时恒显式导出 `0`（bfe 0 = 不限、零 Redis 调用）；
+- 字段非敏感，不参与 `enc$v1$` 加密（与 `Keys[].Key` 不同）；
+- 数据面行为本体（槽满轮换、合成 429、fail-open、TTL 释放等）由 bfe SC48 覆盖，本仓库只锁控制面
+  配置-导出契约；
+- 检查项 #2（PUT/PATCH 对称性）不适用：`/clusters` 无 PUT（既有 CL-4-104 已实证 405）；
+- 检查项 #7（审计）：`llm_config` 随集群整体快照落审计，与 price_miss_action 用例口径一致，不单独展开；
+- 检查项 #10（MySQL 并发）不适用：纯配置透传，无 ID 生成/行锁路径。
+
+## 16. 注意事项
 
 1. v0.3.0 已删除 `/clusters/{cluster_name}/ready`、`/model-providers`、`/models`。
 2. 返回中不应出现 `ready`、`sub_clusters`、`scheduler`、`Instance.tags`、`llm_config.service_name`、`llm_config.group`。

@@ -1319,3 +1319,122 @@ func assertClusterPenaltyTTL(t *testing.T, name string, want429, wantAuth int) {
 	assert.Equal(t, float64(want429), affinity["penalty_ttl_429"])
 	assert.Equal(t, float64(wantAuth), affinity["penalty_ttl_auth"])
 }
+
+// TestClusters_Create_MaxConcurrencyPerKey covers the control-plane contract of
+// llm_config.max_concurrency_per_key: explicit values are stored and echoed
+// back, omission leaves it unset (exported as 0 = unlimited), and negative
+// values are rejected with 422 — unlike the penalty TTLs, 0 is a legal
+// "unlimited" value.
+func TestClusters_Create_MaxConcurrencyPerKey(t *testing.T) {
+	provider := testutil.UniqueProviderName()
+	if _, err := testutil.CreateProvider(provider, map[string]interface{}{
+		"models": []string{"deepseek-chat"},
+	}); err != nil {
+		t.Fatalf("setup provider failed: %v", err)
+	}
+
+	createBody := func(name string, llmExtra map[string]interface{}) map[string]interface{} {
+		llm := map[string]interface{}{
+			"models":   []string{"deepseek-chat"},
+			"provider": provider,
+		}
+		for k, v := range llmExtra {
+			llm[k] = v
+		}
+		return map[string]interface{}{
+			"name":       name,
+			"llm_config": llm,
+		}
+	}
+
+	t.Run("显式值落库并回读", func(t *testing.T) {
+		name := testutil.UniqueClusterName()
+		resp, err := testutil.GetClient().Post("/open-api/v1/clusters", createBody(name,
+			map[string]interface{}{"max_concurrency_per_key": 1}))
+		if err != nil {
+			t.Fatalf("request failed: %v", err)
+		}
+		testutil.AssertSuccess(t, resp)
+		defer testutil.DeleteCluster(name)
+
+		assertClusterMaxConcurrencyPerKey(t, name, 1)
+	})
+
+	t.Run("0 合法（不限）", func(t *testing.T) {
+		name := testutil.UniqueClusterName()
+		resp, err := testutil.GetClient().Post("/open-api/v1/clusters", createBody(name,
+			map[string]interface{}{"max_concurrency_per_key": 0}))
+		if err != nil {
+			t.Fatalf("request failed: %v", err)
+		}
+		testutil.AssertSuccess(t, resp)
+		defer testutil.DeleteCluster(name)
+
+		assertClusterMaxConcurrencyPerKey(t, name, 0)
+	})
+
+	t.Run("缺省回显 null（等效 0 不限）", func(t *testing.T) {
+		name := testutil.UniqueClusterName()
+		resp, err := testutil.GetClient().Post("/open-api/v1/clusters", createBody(name, nil))
+		if err != nil {
+			t.Fatalf("request failed: %v", err)
+		}
+		testutil.AssertSuccess(t, resp)
+		defer testutil.DeleteCluster(name)
+
+		resp, err = testutil.GetClient().Get("/open-api/v1/clusters/" + name)
+		if err != nil {
+			t.Fatalf("read back failed: %v", err)
+		}
+		testutil.AssertSuccess(t, resp)
+		var data map[string]interface{}
+		if err := json.Unmarshal(resp.Data, &data); err != nil {
+			t.Fatalf("unmarshal failed: %v", err)
+		}
+		llm, _ := data["llm_config"].(map[string]interface{})
+		// Echoes JSON null like every other unset pointer field; null is
+		// equivalent to 0 (unlimited).
+		assert.Nil(t, llm["max_concurrency_per_key"])
+	})
+
+	t.Run("负数 422", func(t *testing.T) {
+		for _, v := range []int{-1, -100} {
+			name := testutil.UniqueClusterName()
+			resp, err := testutil.GetClient().Post("/open-api/v1/clusters", createBody(
+				name,
+				map[string]interface{}{"max_concurrency_per_key": v},
+			))
+			if err != nil {
+				t.Fatalf("%d: request failed: %v", v, err)
+			}
+			assert.Equal(t, 422, resp.ErrNum, "max_concurrency_per_key=%d should be rejected, got %d %s",
+				v, resp.ErrNum, resp.ErrMsg)
+			assert.Contains(t, resp.ErrMsg, "max_concurrency_per_key", "error must be attributable to the field")
+
+			// rejected config must not leak: the cluster must not exist at all
+			getResp, err := testutil.GetClient().Get("/open-api/v1/clusters/" + name)
+			if err != nil {
+				t.Fatalf("%d: read back failed: %v", v, err)
+			}
+			assert.NotEqual(t, 200, getResp.ErrNum, "rejected cluster %s must not be persisted", name)
+		}
+	})
+}
+
+// assertClusterMaxConcurrencyPerKey reads the cluster back and checks the field.
+func assertClusterMaxConcurrencyPerKey(t *testing.T, name string, want int) {
+	t.Helper()
+
+	resp, err := testutil.GetClient().Get("/open-api/v1/clusters/" + name)
+	if err != nil {
+		t.Fatalf("read back failed: %v", err)
+	}
+	testutil.AssertSuccess(t, resp)
+
+	var data map[string]interface{}
+	if err := json.Unmarshal(resp.Data, &data); err != nil {
+		t.Fatalf("unmarshal failed: %v", err)
+	}
+	llm, _ := data["llm_config"].(map[string]interface{})
+	assert.Equal(t, float64(want), llm["max_concurrency_per_key"])
+}

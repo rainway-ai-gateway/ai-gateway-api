@@ -444,6 +444,7 @@ func normalizeLLMConfig(llm *icluster_conf.LLMConfig) *icluster_conf.LLMConfig {
 		Keys:                   llm.Keys,
 		KeyPolicy:              llm.KeyPolicy,
 		KeyAffinity:            normalizeKeyAffinity(llm.KeyAffinity),
+		MaxConcurrencyPerKey:   llm.MaxConcurrencyPerKey, // nil stays nil (= unlimited); no write-time default
 		NormalizeUpstreamError: llm.NormalizeUpstreamError,
 		EnsureReasoningContent: llm.EnsureReasoningContent,
 		PriceMissAction:        llm.PriceMissAction,

@@ -1394,3 +1394,127 @@ func assertUpdatedClusterPenaltyTTL(t *testing.T, name string, want429, wantAuth
 	assert.Equal(t, float64(want429), affinity["penalty_ttl_429"])
 	assert.Equal(t, float64(wantAuth), affinity["penalty_ttl_auth"])
 }
+
+// TestClusters_Update_MaxConcurrencyPerKey covers the update contract of
+// llm_config.max_concurrency_per_key: the value persists across PATCH, the
+// InnerAPI export carries the same value, negative values are rejected
+// without side effects, and omitting the field drops it (export falls back
+// to 0 = unlimited).
+func TestClusters_Update_MaxConcurrencyPerKey(t *testing.T) {
+	provider := testutil.UniqueProviderName()
+	if _, err := testutil.CreateProvider(provider, map[string]interface{}{
+		"models": []string{"deepseek-chat"},
+	}); err != nil {
+		t.Fatalf("setup provider failed: %v", err)
+	}
+
+	clusterName := testutil.UniqueClusterName()
+	resp, err := testutil.GetClient().Post("/open-api/v1/clusters", map[string]interface{}{
+		"name": clusterName,
+		"llm_config": map[string]interface{}{
+			"models":                  []string{"deepseek-chat"},
+			"max_concurrency_per_key": 1,
+			"provider":                provider,
+		},
+	})
+	if err != nil {
+		t.Fatalf("setup failed: %v", err)
+	}
+	testutil.AssertSuccess(t, resp)
+	defer testutil.DeleteCluster(clusterName)
+
+	patchBody := func(extra map[string]interface{}) map[string]interface{} {
+		llm := map[string]interface{}{
+			"models":   []string{"deepseek-chat"},
+			"provider": provider,
+		}
+		for k, v := range extra {
+			llm[k] = v
+		}
+		return map[string]interface{}{"llm_config": llm}
+	}
+
+	readBack := func() map[string]interface{} {
+		t.Helper()
+		resp, err := testutil.GetClient().Get("/open-api/v1/clusters/" + clusterName)
+		if err != nil {
+			t.Fatalf("read back failed: %v", err)
+		}
+		testutil.AssertSuccess(t, resp)
+		var data map[string]interface{}
+		if err := json.Unmarshal(resp.Data, &data); err != nil {
+			t.Fatalf("unmarshal failed: %v", err)
+		}
+		llm, _ := data["llm_config"].(map[string]interface{})
+		return llm
+	}
+
+	assertInnerExport := func(want float64) {
+		t.Helper()
+		resp, err := testutil.GetClient().Get("/inner-api/v1/configs/tls_conf/server_data_conf")
+		if err != nil {
+			t.Fatalf("inner api request failed: %v", err)
+		}
+		testutil.AssertSuccess(t, resp)
+		var innerData map[string]interface{}
+		if err := json.Unmarshal(resp.Data, &innerData); err != nil {
+			t.Fatalf("unmarshal inner data failed: %v", err)
+		}
+		clusterConf, _ := innerData["ClusterConf"].(map[string]interface{})
+		config, _ := clusterConf["Config"].(map[string]interface{})
+		cluster, _ := config[clusterName].(map[string]interface{})
+		aiconf, _ := cluster["AIConf"].(map[string]interface{})
+		assert.Equal(t, want, aiconf["MaxConcurrencyPerKey"])
+	}
+
+	t.Run("更新后回读与 InnerAPI 导出一致", func(t *testing.T) {
+		resp, err := testutil.GetClient().Patch("/open-api/v1/clusters/"+clusterName,
+			patchBody(map[string]interface{}{"max_concurrency_per_key": 2}))
+		if err != nil {
+			t.Fatalf("request failed: %v", err)
+		}
+		testutil.AssertSuccess(t, resp)
+
+		assert.Equal(t, float64(2), readBack()["max_concurrency_per_key"])
+		assertInnerExport(2)
+	})
+
+	t.Run("负数 422 且回读零变更", func(t *testing.T) {
+		resp, err := testutil.GetClient().Patch("/open-api/v1/clusters/"+clusterName,
+			patchBody(map[string]interface{}{"max_concurrency_per_key": -1}))
+		if err != nil {
+			t.Fatalf("request failed: %v", err)
+		}
+		assert.Equal(t, 422, resp.ErrNum, "max_concurrency_per_key=-1 should be rejected")
+		assert.Contains(t, resp.ErrMsg, "max_concurrency_per_key", "error must be attributable to the field")
+
+		assert.Equal(t, float64(2), readBack()["max_concurrency_per_key"])
+		// rejected config must not leak into the exported artifact
+		assertInnerExport(2)
+	})
+
+	t.Run("PATCH 只改 description：本字段保留", func(t *testing.T) {
+		resp, err := testutil.GetClient().Patch("/open-api/v1/clusters/"+clusterName,
+			map[string]interface{}{"description": "touch-nothing"})
+		if err != nil {
+			t.Fatalf("request failed: %v", err)
+		}
+		testutil.AssertSuccess(t, resp)
+
+		assert.Equal(t, float64(2), readBack()["max_concurrency_per_key"])
+		assertInnerExport(2)
+	})
+
+	t.Run("省略字段则移除（导出回落 0 不限）", func(t *testing.T) {
+		resp, err := testutil.GetClient().Patch("/open-api/v1/clusters/"+clusterName, patchBody(nil))
+		if err != nil {
+			t.Fatalf("request failed: %v", err)
+		}
+		testutil.AssertSuccess(t, resp)
+
+		// Echoes JSON null like every other unset pointer field; null is
+		// equivalent to 0 (unlimited), and the InnerAPI export carries 0.
+		assert.Nil(t, readBack()["max_concurrency_per_key"])
+		assertInnerExport(0)
+	})
+}

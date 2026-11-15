@@ -161,6 +161,7 @@ curl -X GET "http://api-server:port/inner-api/v1/configs/tls_conf/server_data_co
                         "SessionAffinityPenaltyTTL429": 60,
                         "SessionAffinityPenaltyTTLAuth": 300
                     },
+                    "MaxConcurrencyPerKey": 1,
                     "MatchPrefix": "deepseek/",
                     "StripPrefix": true,
                     "ModelProtocols": ["openai"],
@@ -239,6 +240,7 @@ curl -X GET "http://api-server:port/inner-api/v1/configs/tls_conf/server_data_co
 | KeyPolicy.SessionAffinityPenaltyEnable | bool | 是否开启 Key 惩罚；对应 OpenAPI `llm_config.key_affinity.penalty_enable`，默认 `true` |
 | KeyPolicy.SessionAffinityPenaltyTTL429 | int | 上游 429 时的惩罚时长（秒）；对应 OpenAPI `llm_config.key_affinity.penalty_ttl_429`，默认 `60`；控制面缺省时导出默认值，BFE 加载期再兜底一层 |
 | KeyPolicy.SessionAffinityPenaltyTTLAuth | int | 上游 401/402/403 时的惩罚时长（秒）；对应 OpenAPI `llm_config.key_affinity.penalty_ttl_auth`，默认 `300`；语义同上 |
+| MaxConcurrencyPerKey | int | 每把上游 Key 的最大并发会话数；对应 OpenAPI `llm_config.max_concurrency_per_key`；`0` = 不限（控制面缺省时显式导出 `0`）；BFE 侧为 Redis 全局会话占用，非敏感字段不参与 `enc$v1$` 加密 |
 | MatchPrefix | string | 需要匹配的 provider/model 前缀；对应 OpenAPI `llm_config.match_prefix` |
 | StripPrefix | bool | 是否裁剪 `MatchPrefix` 前缀；对应 OpenAPI `llm_config.strip_prefix` |
 | ModelProtocols | []string | 该集群所属 provider 支持的模型访问协议；来源为 OpenAPI `/providers` 的 `model_protocols`。枚举值如 `openai`、`anthropic`；为空数组时 BFE 兜底为仅支持 `openai` |

@@ -79,3 +79,7 @@ require (
 	modernc.org/memory v1.5.0 // indirect
 	modernc.org/sqlite v1.23.1 // indirect
 )
+
+// bfe fork: v1.10.0-dev 提交 de10ef5ea307（AIConf.MaxConcurrencyPerKey + SC48）。
+// v1.10.0 正式发布后移除本 replace，require 升正式版。
+replace github.com/bfenetworks/bfe => github.com/mileszhang2016/bfe v1.4.1-0.20261115044259-de10ef5ea307

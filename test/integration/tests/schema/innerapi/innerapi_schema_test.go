@@ -140,7 +140,8 @@ func testServerDataConfSchema(t *testing.T) {
 				"penalty_ttl_429":  30,
 				"penalty_ttl_auth": 120,
 			},
-			"provider": affinityProviderName,
+			"max_concurrency_per_key": 1,
+			"provider":                affinityProviderName,
 		},
 	})
 	require.NoError(t, err)
@@ -196,6 +197,7 @@ func assertServerDataConfKeyAffinity(t *testing.T, data []byte, clusterName stri
 	assert.Equal(t, true, keyPolicy["SessionAffinityPenaltyEnable"])
 	assert.Equal(t, float64(30), keyPolicy["SessionAffinityPenaltyTTL429"])
 	assert.Equal(t, float64(120), keyPolicy["SessionAffinityPenaltyTTLAuth"])
+	assert.Equal(t, float64(1), aiconf["MaxConcurrencyPerKey"])
 }
 
 // assertServerDataConfModelProtocols 校验导出结果中指定 cluster 的 AIConf.ModelProtocols。

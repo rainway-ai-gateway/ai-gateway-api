@@ -221,6 +221,20 @@ func TestNormalizeLLMConfig(t *testing.T) {
 		assert.Equal(t, 120, *got.KeyAffinity.PenaltyTTLAuth)
 	})
 
+	t.Run("copies max_concurrency_per_key (no write-time default)", func(t *testing.T) {
+		in := &icluster_conf.LLMConfig{
+			Models:               []string{"gpt-4"},
+			MaxConcurrencyPerKey: lib.PInt(1),
+		}
+		got := normalizeLLMConfig(in)
+		require.NotNil(t, got)
+		require.NotNil(t, got.MaxConcurrencyPerKey)
+		assert.Equal(t, 1, *got.MaxConcurrencyPerKey)
+
+		// nil stays nil (= unlimited); the export layer fills 0 for bfe.
+		assert.Nil(t, normalizeLLMConfig(&icluster_conf.LLMConfig{}).MaxConcurrencyPerKey)
+	})
+
 	t.Run("copies normalize_upstream_error (no default synthesis)", func(t *testing.T) {
 		in := &icluster_conf.LLMConfig{
 			Models: []string{"gpt-4"},
