@@ -151,6 +151,16 @@ func TestValidateValidateLLMConfig(t *testing.T) {
 	}
 	assert.Error(t, ValidateLLMConfig(&c13))
 
+	// max_concurrency_per_key: nil/0/unlimited pass, negatives are rejected
+	// (0 is a legal "unlimited" value, unlike the penalty TTL ranges above).
+	cConc := *c
+	cConc.MaxConcurrencyPerKey = lib.PInt(0)
+	assert.NoError(t, ValidateLLMConfig(&cConc), "max_concurrency_per_key=0")
+	cConc.MaxConcurrencyPerKey = lib.PInt(1)
+	assert.NoError(t, ValidateLLMConfig(&cConc), "max_concurrency_per_key=1")
+	cConc.MaxConcurrencyPerKey = lib.PInt(-1)
+	assert.Error(t, ValidateLLMConfig(&cConc), "max_concurrency_per_key=-1")
+
 	// valid normalize_upstream_error (full and partial)
 	c14 := *c
 	c14.NormalizeUpstreamError = &NormalizeUpstreamError{

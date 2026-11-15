@@ -162,7 +162,7 @@ var LLMConfigSchema = &testutil.ObjectSchema{
 	Required: []string{"models", "provider"},
 	Optional: []string{
 		"model_mappings", "keys",
-		"key_policy", "key_affinity", "normalize_upstream_error", "ensure_reasoning_content",
+		"key_policy", "key_affinity", "max_concurrency_per_key", "normalize_upstream_error", "ensure_reasoning_content",
 		"price_miss_action", "match_prefix", "strip_prefix",
 	},
 	Fields: map[string]testutil.FieldSpec{
@@ -171,6 +171,7 @@ var LLMConfigSchema = &testutil.ObjectSchema{
 		"keys":                     {Type: testutil.TypeArray, Elem: ClusterKeySchema},
 		"key_policy":               {Type: testutil.TypeObject, Nested: KeyPolicySchema},
 		"key_affinity":             {Type: testutil.TypeObject, Nested: KeyAffinitySchema},
+		"max_concurrency_per_key":  {Type: testutil.TypeInt},
 		"normalize_upstream_error": {Type: testutil.TypeObject, Nested: NormalizeUpstreamErrorSchema},
 		"ensure_reasoning_content": {Type: testutil.TypeArray, Item: &testutil.FieldSpec{Type: testutil.TypeString}},
 		"price_miss_action":        {Type: testutil.TypeString},

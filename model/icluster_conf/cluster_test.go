@@ -471,8 +471,9 @@ func newTestClusterLLM() *Cluster {
 			MaxBodyBytes:       lib.PInt64(65536),
 			RedactSecrets:      lib.PBool(true),
 		},
-		MatchPrefix: lib.PString("openrouter/"),
-		StripPrefix: lib.PBool(true),
+		MaxConcurrencyPerKey: lib.PInt(1),
+		MatchPrefix:          lib.PString("openrouter/"),
+		StripPrefix:          lib.PBool(true),
 	}
 	return c
 }
@@ -1443,6 +1444,7 @@ func TestNewBfeClusterConf(t *testing.T) {
 		assert.Equal(t, int64(65536), cConf.AIConf.NormalizeUpstreamError.MaxBodyBytes)
 		require.NotNil(t, cConf.AIConf.NormalizeUpstreamError.RedactSecrets)
 		assert.True(t, *cConf.AIConf.NormalizeUpstreamError.RedactSecrets)
+		assert.Equal(t, 1, cConf.AIConf.MaxConcurrencyPerKey)
 	})
 
 	t.Run("LLM config without key_affinity exports penalty defaults", func(t *testing.T) {
@@ -1469,6 +1471,30 @@ func TestNewBfeClusterConf(t *testing.T) {
 		// "never expire").
 		assert.Equal(t, 60, cConf.AIConf.KeyPolicy.SessionAffinityPenaltyTTL429)
 		assert.Equal(t, 300, cConf.AIConf.KeyPolicy.SessionAffinityPenaltyTTLAuth)
+	})
+
+	t.Run("LLM config without max_concurrency_per_key exports 0 (unlimited)", func(t *testing.T) {
+		providerKeyTable := map[string][]iprovider.ProviderKey{
+			"openai": {
+				{Name: "key-primary", Key: "sk-aaaaaaaaaaaa"},
+				{Name: "key-secondary", Key: "sk-bbbbbbbbbbbb"},
+			},
+		}
+		providerProtocolTable := map[string][]string{
+			"openai": {"openai"},
+		}
+		cluster := newTestClusterLLM()
+		cluster.LLMConfig.MaxConcurrencyPerKey = nil
+
+		conf, err := NewBfeClusterConf(context.Background(), "v1", []*Cluster{cluster}, nil,
+			providerKeyTable, providerProtocolTable, nil, nil, nil)
+		assert.NoError(t, err)
+		cConf := (*conf.Config)["c1"]
+		require.NotNil(t, cConf.AIConf)
+		// A cluster stored before this change has no max_concurrency_per_key:
+		// the export must carry 0 explicitly (bfe treats 0 as unlimited and
+		// skips all Redis calls, so the behavior is identical to before).
+		assert.Equal(t, 0, cConf.AIConf.MaxConcurrencyPerKey)
 	})
 
 	t.Run("LLM config with tiered pricing", func(t *testing.T) {

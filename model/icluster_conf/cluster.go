@@ -253,6 +253,11 @@ type LLMConfig struct {
 	Keys                   []ClusterKeyRef         `json:"keys"`                     // references to provider keys with weights
 	KeyPolicy              *KeyPolicy              `json:"key_policy"`               // key routing policy
 	KeyAffinity            *KeyAffinity            `json:"key_affinity"`             // session-level key affinity
+	// MaxConcurrencyPerKey caps the number of distinct client sessions
+	// (ClientKeyId) per upstream Key, uniformly for every Key of this cluster.
+	// nil / 0 = unlimited (default). Mirrored by the BFE AIConfCheck rule
+	// (< 0 rejected) so an accepted config never fails the data-plane load.
+	MaxConcurrencyPerKey   *int                    `json:"max_concurrency_per_key"`
 	NormalizeUpstreamError *NormalizeUpstreamError `json:"normalize_upstream_error"` // upstream error normalization (unified error codes)
 	// EnsureReasoningContent lists the model access protocols for which the
 	// gateway fills an empty reasoning_content on the assistant messages that
@@ -1655,11 +1660,12 @@ func newAIConf(llmConfig *LLMConfig, modelTable *cluster_conf.ModelTable,
 	providerKeys []iprovider.ProviderKey, providerModelProtocols []string,
 	providerProtocolPaths map[string]string) *cluster_conf.AIConf {
 	aiConf := &cluster_conf.AIConf{
-		Type:           0,
-		ModelMapping:   convertToBFEModelMapping(llmConfig.ModelMappings),
-		Keys:           []cluster_conf.AIKey{},
-		ModelProtocols: providerModelProtocols,
-		ProtocolPaths:  providerProtocolPaths,
+		Type:                 0,
+		ModelMapping:         convertToBFEModelMapping(llmConfig.ModelMappings),
+		Keys:                 []cluster_conf.AIKey{},
+		ModelProtocols:       providerModelProtocols,
+		ProtocolPaths:        providerProtocolPaths,
+		MaxConcurrencyPerKey: derefInt(llmConfig.MaxConcurrencyPerKey, 0),
 	}
 
 	if llmConfig.Provider != nil {

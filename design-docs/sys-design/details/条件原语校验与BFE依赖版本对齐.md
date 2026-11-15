@@ -29,14 +29,15 @@
 ## 4. 依赖对齐操作口径
 
 fork 的 go.mod 仍声明 `module github.com/bfenetworks/bfe`，与 `replace` 左侧一致，Go 允许该形态；
-`require github.com/bfenetworks/bfe v1.8.8` 保持不变，由 `replace` 覆盖。
+`require github.com/bfenetworks/bfe v1.9.0` 保持不变，由 `replace` 覆盖（v1.9.0 发布前的窗口期曾短暂移除 replace、直接 require 正式版；v1.10.0 发布前为获取 `AIConf.MaxConcurrencyPerKey` 重新指回 fork，发布后再度移除）。
 
 ```bash
 cd ai-gateway-api
 
 # 1) 把 bfe 侧目标提交解析为伪版本：v<基准tag>-0.<UTC yyyymmddhhmmss>-<12位sha>
 #    基准 tag = 该提交上可达的最高 tag（本 fork 为 v1.4.1）；时间戳取提交时间（UTC）
-go mod edit -replace github.com/bfenetworks/bfe=github.com/mileszhang2016/bfe@v1.4.1-0.20261014135930-831135f2bfa5
+#    当前指向：v1.10.0-dev 提交 de10ef5ea307（per-Key 并发会话限制，2026-11-15）
+go mod edit -replace github.com/bfenetworks/bfe=github.com/mileszhang2016/bfe@v1.4.1-0.20261115044259-de10ef5ea307
 
 # 2) 新推送的提交，sumdb 往往尚未收录 → 该模块改为直连 GitHub（跳过 sumdb）
 GOPRIVATE=github.com/mileszhang2016/* go mod tidy

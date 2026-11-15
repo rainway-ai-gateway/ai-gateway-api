@@ -507,7 +507,7 @@ func testClusterSchema(t *testing.T) {
 		},
 		"timeout": map[string]interface{}{
 			"connect": "1s",
-			"call":    "3s",
+			"call":    "11s", // default filled at write time (issue: EPP default timeouts, 3s -> 11s)
 		},
 	})
 
