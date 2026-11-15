@@ -35,5 +35,6 @@
 | /report | [report.md](./report.md) |
 | /expression/verify | [expression-verify.md](./expression-verify.md) |
 | /batches、/batch-files | [batches.md](./batches.md) |
+| /access-log | [access-log.md](./access-log.md) |
 | 关键业务流程 | [workflows.md](./workflows.md) |
 | 对象关系图 | [object-relations.md](./object-relations.md) |

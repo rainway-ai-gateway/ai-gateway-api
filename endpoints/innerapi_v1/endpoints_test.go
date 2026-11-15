@@ -24,7 +24,7 @@ import (
 
 func TestEndpoints(t *testing.T) {
 	eps := endpoints()
-	require.Len(t, eps, 19)
+	require.Len(t, eps, 20)
 
 	paths := make([]string, 0, len(eps))
 	for _, ep := range eps {
@@ -51,6 +51,7 @@ func TestEndpoints(t *testing.T) {
 		"/configs/traffic-mirror-rule",
 		"/configs/ai-route",
 		"/configs/mod-ai-intent",
+		"/configs/mod-access-pb",
 		"/configs/epp_data/config",
 		"/k8s_pools/{name}/instances",
 		"/k8s_pools/{name}",

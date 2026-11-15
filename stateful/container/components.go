@@ -29,6 +29,7 @@
 package container
 
 import (
+	"github.com/rainway-ai-gateway/ai-gateway-api/model/access_log"
 	"github.com/rainway-ai-gateway/ai-gateway-api/model/ai_cache"
 	"github.com/rainway-ai-gateway/ai-gateway-api/model/ai_context"
 	"github.com/rainway-ai-gateway/ai-gateway-api/model/api_key"
@@ -107,6 +108,7 @@ var (
 	AIContextSettingsStorager       ai_context.AIContextSettingsStorager
 	TrafficMirrorStorager           traffic_mirror.TrafficMirrorStorager
 	IntentConfigStorager            iintent_config.IntentConfigStorager
+	AccessLogConfStorager           access_log.AccessLogConfStorager
 	RouteRulesStorager              shared.RouteRulesStorager
 	QuotaCacheSingleton             quotacache.QuotaCache
 
@@ -133,6 +135,8 @@ var (
 	AIContextManager       *ai_context.AIContextManager
 	TrafficMirrorManager   *traffic_mirror.TrafficMirrorManager
 	IntentConfigManager    *iintent_config.IntentConfigManager
+	AccessLogManager       *access_log.AccessLogManager
+	AccessLogExporter      *imods.AccessLogExporter
 	RouteRulesManager      *route_rules.RouteRulesManager
 	AIRouteExporter        *imods.AIRouteExporter
 	BalanceSyncManager     *quota.BalanceSyncManager

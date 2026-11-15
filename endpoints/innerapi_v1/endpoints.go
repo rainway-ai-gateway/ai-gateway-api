@@ -23,6 +23,7 @@ import (
 	"github.com/rainway-ai-gateway/ai-gateway-api/endpoints/innerapi_v1/epp_data"
 	"github.com/rainway-ai-gateway/ai-gateway-api/endpoints/innerapi_v1/extra_file"
 	"github.com/rainway-ai-gateway/ai-gateway-api/endpoints/innerapi_v1/gslb_data"
+	"github.com/rainway-ai-gateway/ai-gateway-api/endpoints/innerapi_v1/access_log"
 	"github.com/rainway-ai-gateway/ai-gateway-api/endpoints/innerapi_v1/intent_config_export"
 	"github.com/rainway-ai-gateway/ai-gateway-api/endpoints/innerapi_v1/k8s_pools"
 	"github.com/rainway-ai-gateway/ai-gateway-api/endpoints/innerapi_v1/mod_api_key"
@@ -52,6 +53,7 @@ func endpoints() []*xreq.Endpoint {
 		traffic_mirror.ExportRoute,
 		ai_route.ExportRoute,
 		intent_config_export.ExportRoute,
+		access_log.ExportRoute,
 		epp_data.ExportRoute,
 		k8s_pools.ReplaceInstancesRoute,
 		k8s_pools.GetPoolRoute,

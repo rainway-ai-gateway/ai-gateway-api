@@ -586,6 +586,17 @@ CREATE TABLE `intent_config` (
   PRIMARY KEY (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='AI意图配置表（mod_ai_intent intent_questions.data 数据源：问题集+门控阈值，单行覆盖式存储）';
 
+-- create access_log_conf (访问日志配置表)
+DROP TABLE IF EXISTS `access_log_conf`;
+CREATE TABLE `access_log_conf` (
+  `id` BIGINT NOT NULL AUTO_INCREMENT COMMENT '主键ID（固定 id=1，单行覆盖式存储）',
+  `req_headers` TEXT NOT NULL COMMENT '请求头采集白名单 JSON 数组（元素为 HTTP 规范化形式，可为 [] 表示不采集）',
+  `res_headers` TEXT NOT NULL COMMENT '响应头采集白名单 JSON 数组（元素为 HTTP 规范化形式，可为 [] 表示不采集）',
+  `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+  `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+  PRIMARY KEY (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='访问日志配置（mod_access_pb.data access_header 段数据源：请求/响应头采集白名单，单行覆盖式存储）';
+
 -- create route_rules (路由规则表)
 DROP TABLE IF EXISTS `route_rules`;
 CREATE TABLE `route_rules` (

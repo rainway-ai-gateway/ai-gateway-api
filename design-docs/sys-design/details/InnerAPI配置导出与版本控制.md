@@ -345,6 +345,27 @@ type IntentConfigDataExport struct {
 
 ---
 
+### 4.12 mod-access-pb（`/configs/mod-access-pb`）
+
+由 `model/access_log/access_log_manager.go` 的导出生成 + `model/imods/access_log_exporter.go` 实现，是 BFE `mod_access_pb3` 模块数据文件 `mod_access_pb.data` 的数据源（多段式 JSON，当前仅 `access_header` 段；bfenetworks/bfe#1506）：
+
+```go
+type ModAccessPbDataExport struct {
+    Version      string             `json:"Version"`
+    AccessHeader AccessHeaderExport `json:"access_header"`
+}
+```
+
+生成流程：
+
+1. `Fetch` 取 `access_log_conf` 当前行（全局单例）；**无记录返回空白名单**（`req_headers/res_headers` 空数组）——与 ai-route 的"无记录不导出"不同：空白名单是合法语义（BFE 按缺省运行，不采集），仍参与版本签名；
+2. 组装 `ModAccessPbDataExport`——顶层 key 与 BFE 加载器契约**逐字一致**（`Version`/`access_header`/`req_headers`/`res_headers`）；
+3. 导出内容 version 与上次导出相同返回 nil（不触发 conf-agent 落盘与 BFE `/reload/mod_access_pb3`）。
+
+> 详见《modifications/2026-11-15-access-log-header-whitelist/》与 BFE 侧 `docs/zh_cn/sys_design/mod_access_pb_data_conf.md`。控制面写路径为 OpenAPI `GET/PUT /access-log/config`（api-define/access-log.md）。
+
+---
+
 ## 5. 增量同步机制
 
 所有使用版本控制的导出接口都遵循统一的增量同步协议：
@@ -406,6 +427,7 @@ Authorization: Token <token>
 | `mod_ai_cache` | AI 缓存规则模块 | 否 |
 | `intent_config` | AI 意图配置模块 | 否 |
 | `ai_route` | AI 路由模块 | 否 |
+| `mod_access_pb` | 访问日志动态配置（`mod_access_pb.data`，Header 白名单） | 否 |
 
 > `gslb.<bfe_cluster>` 因为依赖参数，不同 BFE 集群的版本号线相互独立。
 

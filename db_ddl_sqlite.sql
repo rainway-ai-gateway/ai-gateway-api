@@ -625,6 +625,18 @@ CREATE TABLE intent_config (
 CREATE TRIGGER intent_config_updated_at AFTER UPDATE ON intent_config
   FOR EACH ROW BEGIN UPDATE intent_config SET updated_at = CURRENT_TIMESTAMP WHERE id = OLD.id; END;
 
+-- create access_log_conf (访问日志配置表)
+DROP TABLE IF EXISTS access_log_conf;
+CREATE TABLE access_log_conf (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  req_headers TEXT NOT NULL,
+  res_headers TEXT NOT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TRIGGER access_log_conf_updated_at AFTER UPDATE ON access_log_conf
+  FOR EACH ROW BEGIN UPDATE access_log_conf SET updated_at = CURRENT_TIMESTAMP WHERE id = OLD.id; END;
+
 -- create route_rules (路由规则表)
 DROP TABLE IF EXISTS route_rules;
 CREATE TABLE route_rules (

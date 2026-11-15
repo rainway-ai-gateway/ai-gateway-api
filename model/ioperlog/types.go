@@ -77,6 +77,7 @@ const (
 	ResourceTypeAIContextSettings       ResourceType = "ai_context_settings"
 	ResourceTypeTrafficMirrorRule       ResourceType = "traffic_mirror_rule"
 	ResourceTypeIntentConfig            ResourceType = "intent_config"
+	ResourceTypeAccessLogConf           ResourceType = "access_log_conf"
 	ResourceTypeModelPrice              ResourceType = "model_price"
 	ResourceTypeBatchTask               ResourceType = "batch_task"
 	ResourceTypeUser                    ResourceType = "user"
