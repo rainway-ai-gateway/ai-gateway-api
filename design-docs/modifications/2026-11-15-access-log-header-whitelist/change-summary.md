@@ -4,7 +4,7 @@
 >
 > 实施要点：存储为单行覆盖式 `access_log_conf`（无 version 列，版本由导出链路数据签名承担）；**空白名单也导出**（与 intent_config “未发布不导出” 语义不同——空白名单是合法默认态，且需支持撤销已发布白名单）；敏感头硬拒绝仅控制面做（校验表镜像 BFE `TestNormalizeHeaderNames` 防漂移）。
 >
-> 数据面（bfe）对应变更**已实施并推送**（`bfe` 仓库 `v1.10.0-dev` 提交 `25f5e65e`，SC49 集成测试 8/8 通过）。配套文档：接口变更明细见 [api-changes.md](./api-changes.md)；控制面实施设计（数据流/存储/导出/测试计划/实施清单）见 [design-changes.md](./design-changes.md)。
+> 数据面（bfe）对应变更**已实施并推送**（`bfe` 仓库 `v1.10.0-dev` 提交 `c3ddeb18`，SC49 集成测试 8/8 通过）。配套文档：接口变更明细见 [api-changes.md](./api-changes.md)；控制面实施设计（数据流/存储/导出/测试计划/实施清单）见 [design-changes.md](./design-changes.md)。
 
 ## 1. 背景
 
