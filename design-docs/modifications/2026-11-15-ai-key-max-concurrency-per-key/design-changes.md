@@ -1,6 +1,6 @@
 # 设计变更说明：cluster 级 `max_concurrency_per_key`（控制面）
 
-> 数据面（bfe）对应变更已实施并推送（`bfe` 仓库 `v1.10.0-dev` 提交 `de10ef5e`，SC48 集成测试全过）。**控制面（本仓库）已实施（2026-11-15），实施记录见 §9。**
+> 数据面（bfe）对应变更已实施并推送（`bfe` 仓库 `v1.10.0-dev` 提交 `ea4a0580`（ amend 补 Sign-off 后哈希，原 `de10ef5e`），SC48 集成测试全过）。**控制面（本仓库）已实施（2026-11-15），实施记录见 §9。**
 
 ## 1. 数据流与默认值分层
 
@@ -59,9 +59,9 @@ aiConf := &cluster_conf.AIConf{
 
 ## 3. 依赖提升
 
-`AIConf.MaxConcurrencyPerKey` 类型字段来自 BFE（`go.mod` 的 fork replace）。数据面已合入 fork `v1.10.0-dev` 提交 **`de10ef5e`**（已推送 origin）。
+`AIConf.MaxConcurrencyPerKey` 类型字段来自 BFE（`go.mod` 的 fork replace）。数据面已合入 fork `v1.10.0-dev` 提交 **`ea4a0580`**（已推送 origin，amend 补 Sign-off）。
 
-1. 把 `go.mod` 的 replace 指向该提交的伪版本（形如 `v1.4.1-0.<UTC>-de10ef5e`，由 `go mod tidy` 生成准确时间戳；sumdb 未收录时首次 tidy 用 `GOPRIVATE=github.com/mileszhang2016/*` 跳过，写 `go.sum` 后再普通 tidy 一次）；
+1. 把 `go.mod` 的 replace 指向该提交的伪版本（形如 `v1.4.1-0.<UTC>-ea4a0580`，由 `go mod tidy` 生成准确时间戳；sumdb 未收录时首次 tidy 用 `GOPRIVATE=github.com/mileszhang2016/*` 跳过，写 `go.sum` 后再普通 tidy 一次）；
 2. 同步 `go.mod` 的 TODO 注释（对应分支与提交）；
 3. 验证字段到位：
 
@@ -118,13 +118,13 @@ cd test/integration && go test ./tests/schema/... ./tests/clusters/...
 | 新控制面 + 旧 BFE | 旧 BFE 忽略未知字段 → 限制不生效（等效 fail-open），其余配置不受影响 |
 | 旧控制面 + 新 BFE | 缺字段解码为 `0` → 不限，行为一致 |
 
-发布顺序：bfe（**已完成**，`de10ef5e`）→ 本仓库 → Web。发布说明写明「`>0` 依赖数据面 `[AIKeyAffinity]` Redis，故障期间限制 fail-open」。
+发布顺序：bfe（**已完成**，`ea4a0580`）→ 本仓库 → Web。发布说明写明「`>0` 依赖数据面 `[AIKeyAffinity]` Redis，故障期间限制 fail-open」。
 
 回滚：控制面回滚后新字段被旧版本忽略（PATCH 会丢弃），集群其余配置不受影响；数据面回滚即回到无并发限制。
 
 ## 8. 实施清单
 
-- [x] `go.mod` replace 指向 fork 提交 `de10ef5e` + `go mod tidy` + `go doc` 验证字段
+- [x] `go.mod` replace 指向 fork 提交 `ea4a0580` + `go mod tidy` + `go doc` 验证字段
 - [x] `LLMConfig` 增 `MaxConcurrencyPerKey *int`
 - [x] `ValidateLLMConfig` 增 `>=0` 校验（与 bfe `AIConfCheck` 对齐）
 - [x] `newAIConf` 导出 `derefInt(..., 0)`
@@ -139,7 +139,7 @@ cd test/integration && go test ./tests/schema/... ./tests/clusters/...
 
 ### 9.1 依赖
 
-- `go.mod` 末尾新增 replace：`github.com/bfenetworks/bfe => github.com/mileszhang2016/bfe v1.4.1-0.20261115044259-de10ef5ea307`（fork `v1.10.0-dev` 提交 `de10ef5e`，含 `AIConf.MaxConcurrencyPerKey`；附注释说明 v1.10.0 发布后移除）；
+- `go.mod` 末尾新增 replace：`github.com/bfenetworks/bfe => github.com/mileszhang2016/bfe v1.4.1-0.20261115053226-ea4a0580f5f0`（fork `v1.10.0-dev` 提交 `ea4a0580`，含 `AIConf.MaxConcurrencyPerKey`；附注释说明 v1.10.0 发布后移除；§9.1 初版曾指向 amend 前的 `de10ef5e`）；
 - 伪版本由 `go list -m ...@<full-sha>` 解析得出（手工按本地 tag 猜的 `v1.8.8.7-0...` 基准不被接受，**以 go 解析结果为准**）；
 - 首次 `go mod tidy` 用 `GOPRIVATE=github.com/mileszhang2016/*`，随后普通 `go mod tidy` 稳定通过；
 - `test/integration` 子模块 `go mod tidy` 一次（主模块 replace 变化传导）。
@@ -186,4 +186,4 @@ cd test/integration && go test ./tests/schema/... ./tests/clusters/...
 - 未提交、未推送（等待人工确认）；
 - `go.mod` replace 为窗口期形态，bfe v1.10.0 正式发布后移除并升正式版（replace 注释已写明）；
 - 全量集成套件中 `TestInnerAPI_ExportVersionMonotonic` 曾出现一次 SQLite `database operation failed`（delete cluster 500），单包重跑通过，判定为套件并发下的偶发锁冲突，与本变更无关；
-- 发布顺序：bfe（已发布 `de10ef5e`）→ 本仓库 → Web；Web 表单需增加该字段（默认 0/不限）。
+- 发布顺序：bfe（已发布 `ea4a0580`）→ 本仓库 → Web；Web 表单需增加该字段（默认 0/不限）。
