@@ -46,7 +46,8 @@ id = "systemSecurity.admin.list"
 text = "SystemSecurityManage"
 allowed_roles = ["admin", "admin_readonly"]
 children = [
-    { id = "ReencryptSweep.list", text = "ReencryptSweepManage", allowed_roles = ["admin", "admin_readonly"] }
+    { id = "ReencryptSweep.list", text = "ReencryptSweepManage", allowed_roles = ["admin", "admin_readonly"] },
+    { id = "AccessLog.list", text = "AccessLogManage", allowed_roles = ["admin", "admin_readonly"] }
 ]
 
 [[children]]
